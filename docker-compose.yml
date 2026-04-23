@@ -6,7 +6,7 @@ services:
     restart: always
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: StrongPassword123
+      POSTGRES_PASSWORD: root
       POSTGRES_DB: testy
     ports:
       - "5432:5432"
@@ -20,7 +20,7 @@ services:
     ports:
       - "8787:8787"
     environment:
-      DATABASE_URL: postgresql://postgres:StrongPassword123@db:5432/testy
+      DATABASE_URL: postgresql://postgres:root@db:5432/testy
 
 volumes:
   pgdata:
