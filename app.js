@@ -23,7 +23,8 @@ app.use(
       "http://127.0.0.1:5500",        
       "https://f7acfea4e102.ngrok-free.app",
       "https://maintenance-genie-72uvp6qac-bbsfullstacks-projects.vercel.app/admin",
-      "https://maintenance-genie-bay.vercel.app"
+      "https://maintenance-genie-bay.vercel.app",
+      "https://cleint-sys1.vercel.app/"
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE'], 
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],  
