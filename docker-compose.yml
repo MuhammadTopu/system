@@ -3,12 +3,10 @@ version: "3.9"
 services:
   app:
     build: .
-    depends_on:
-      - db
     ports:
       - "8787:8787"
     environment:
-      DATABASE_URL: postgresql://postgres:root@db:5432/testy
-
-volumes:
-  pgdata:
+      DATABASE_URL: postgresql://postgres:root@host.docker.internal:5432/testy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: always
