@@ -1,0 +1,299 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Status {
+  active
+  inactive
+  expired
+  suspended
+}
+
+
+model Temp{
+  id         String   @id @default(cuid())
+  created_at DateTime @default(now())
+  email      String   @unique
+  otp        String   @unique
+  expires_at DateTime
+  is_verified Int?    @default(0) // 0 for not verified, 1 for verified
+
+  @@map("temp")
+}
+
+enum Role {
+  normal
+  premium
+}
+enum Type {
+ USER
+ ADMIN
+}
+model User {
+  id         String   @id @default(cuid())
+  created_at DateTime @default(now())
+  email String  @unique
+  name  String?
+  password  String?
+  customer_id String?
+  country String?
+  address String?
+  gender String?
+  status  Status @default(active)
+  role    Role  @default(normal)
+  type    Type@default(USER)
+  date_of_birth DateTime? @db.Date
+  city  String?
+  phone_number String?
+  avatar   String?
+  state  String?
+  postal_code String?
+  bio    String?
+  billing_id        String?
+  banking_id        String?
+  is_subscribed Boolean? @default(false)
+  is_two_factor_enabled Int?    @default(0)
+  two_factor_secret     String? // secret key for two factor authentication
+  @@map("users")
+
+  Subscription Subscription[]
+  Item Item[]
+  Tasks Tasks[]
+
+  Notification_sender Notification[] @relation("sender")
+  Notification_receiver Notification[] @relation("receiver")
+  UserPaymentMethod UserPaymentMethod[]
+  PaymentTransaction PaymentTransaction[]
+  Mail Mail[]
+}
+
+enum Plan {
+  HalfYearly
+  Yearly
+  Free
+}
+enum SubStat {
+  Active 
+  Ended
+}
+model Subscription {
+  id         String   @id @default(cuid())
+  created_at DateTime @default(now())
+
+  service_id String?
+  service Services? @relation(fields: [service_id], references: [id])
+   
+  price      Float?
+  user_id    String
+  user       User     @relation(fields: [user_id], references: [id])
+  username  String?
+  
+  plan       Plan
+  start_date DateTime
+  end_date   DateTime
+  status     SubStat @default(Active)
+  @@map("subscriptions")
+
+
+  PaymentTransaction PaymentTransaction[]
+}
+
+
+model UserPaymentMethod {
+  id         String    @id @default(cuid())
+  created_at DateTime  @default(now())
+  updated_at DateTime  @default(now())
+  deleted_at DateTime?
+
+  user_id String?
+  user    User?   @relation(fields: [user_id], references: [id])
+
+  payment_method_id String?
+  checkout_id       String?
+
+  @@map("user_payment_methods")
+}
+
+
+model PaymentTransaction {
+  id         String    @id @default(cuid())
+  created_at DateTime  @default(now())
+  updated_at DateTime  @default(now())
+  deleted_at DateTime?
+  status     String?   @default("pending")
+
+  user_id String?
+  user    User?   @relation(fields: [user_id], references: [id])
+
+  subscription_id String?
+  subscription    Subscription? @relation(fields: [subscription_id], references: [id])
+
+  provider String? 
+  price           Decimal? 
+  currency         String?
+  paid_amount      Decimal?
+  paid_currency    String?
+  payment_method  String?
+
+  @@map("payment_transactions")
+}
+
+model NotificationEvent {
+  id         String    @id @default(cuid())
+  created_at DateTime  @default(now())
+  updated_at DateTime  @default(now())
+  deleted_at DateTime?
+
+  status Int?    @default(1) @db.SmallInt
+  type   String?
+  text   String?
+
+  notifications Notification[]
+
+  @@map("notification_events")
+}
+
+model Notification {
+  id         String    @id @default(cuid())
+  created_at DateTime  @default(now())
+  updated_at DateTime  @default(now())
+  deleted_at DateTime?
+
+  status Int? @default(1) @db.SmallInt
+
+  sender_id String?
+  sender    User?   @relation("sender", fields: [sender_id], references: [id])
+
+  receiver_id String?
+  receiver    User?   @relation("receiver", fields: [receiver_id], references: [id])
+
+  notification_event_id String?
+  notification_event    NotificationEvent? @relation(fields: [notification_event_id], references: [id])
+
+  entity_id String?
+  read_at   DateTime?
+
+  @@map("notifications")
+}
+
+
+enum Category {
+  Vehicle
+  Appliance
+  Electronics
+  Custom
+}
+
+model Item{
+  id        String   @id @default(cuid())
+  created_at DateTime @default(now())
+
+  user_id    String
+  user       User     @relation(fields: [user_id], references: [id])
+ 
+
+  task_id    String?
+  name       String
+  description String?
+  brand      String?
+  model      String?
+  vin        String?
+  purchase_date DateTime?
+  total_mileage Float?
+  last_service_date DateTime?
+  last_service_name String?
+  image_url String?
+  price      String? // price of the item, can be null if not applicable
+  image      String?
+  category   Category? @default(Custom)
+  service_intervals  String[]
+  forum_suggestions String[] // if subscription is active, this will be used to suggest forums related to the item
+  @@map("items")
+
+  Tasks Tasks[]
+
+}
+
+enum Task_Status {
+  Due 
+  Completed
+  Overdue
+}
+
+model Tasks {
+  id         String   @id @default(cuid())
+  created_at DateTime @default(now())
+
+  item_id    String @unique
+  item       Item     @relation(fields: [item_id], references: [id])
+
+  user_id    String
+  user       User     @relation(fields: [user_id], references: [id])
+
+  upcoming_task String?
+  item_name String
+  description String?
+  item_last_service_date DateTime?
+  receipt_url String?
+  status     Task_Status @default(Due)
+  last_date DateTime?
+  maintenance_history String[] // if subscription is active, this will be used to store the maintenance history of the item
+  shop_suggestions String[] // if subscription is active, this will be used to suggest shops related to the item
+  @@map("tasks")
+}
+enum Mail_Status {
+  Solved
+  Pending
+}
+model Mail{
+  id         String    @id @default(cuid())
+  created_at DateTime  @default(now())
+  updated_at DateTime  @default(now())
+  deleted_at DateTime?
+  user_id String?
+  user    User?   @relation(fields: [user_id], references: [id])
+  user_email String? 
+  user_name  String?
+  subject    String?
+  message    String?
+  token      String? @unique
+  status     Mail_Status @default(Pending)
+
+  @@map("mails")
+}
+
+
+model Services{
+  id         String   @id @default(cuid())
+  created_at DateTime @default(now())
+  name       String
+  description String?
+  price      Float
+  features   String[]
+  plan       Plan 
+  @@map("services")
+  Subscription Subscription[]
+}
+
+model General_Settings{
+  id         String   @id @default(cuid())
+  created_at DateTime @default(now())
+  updated_at DateTime @default(now())
+  
+  description String?
+  contact_email String?
+  contact_phone String?
+  timezone String?
+
+}
