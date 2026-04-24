@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   app:
     build: .
@@ -13,7 +11,7 @@ services:
 
   db:
     image: postgres:16
-    container_name: postgres_db
+    container_name: system-db
     restart: always
     environment:
       POSTGRES_USER: postgres
@@ -22,7 +20,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - system_pg:/var/lib/postgresql/data
 
 volumes:
-  pgdata:
+  system_pg:
