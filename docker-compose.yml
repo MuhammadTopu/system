@@ -18,6 +18,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: newpassword123
       POSTGRES_DB: testy
+      Ports:
+        - "5454:5432"
     volumes:
       - system_pg:/var/lib/postgresql/data
 
