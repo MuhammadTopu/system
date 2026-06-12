@@ -14,7 +14,7 @@ import {
   getMe
 } from './user.controller.js';
 import { upload } from '../../config/Multer.config.js';
-import { verifyUser } from '../../middlewares/verifyUsers.js';
+import { verifyUser } from '../../common/middlewares/verifyUsers.js';
 
 
 const router = express.Router();

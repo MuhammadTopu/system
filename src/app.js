@@ -1,44 +1,43 @@
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
-import { fileURLToPath } from 'url';
-import bodyParser from 'body-parser';
+import { fileURLToPath } from "url";
 import path from "path";
-import userRoutes from "./modules/user/user.route.js";
-import adminRoutes from "./modules/admin/admin.route.js";
-import addItemRoutes from "./modules/add_items/add_items.route.js";
-import pay from "./modules/paymnet/stripe.route.js";
+import routes from "./routes/index.js";
 import nodeCron from "node-cron";
-import { PrismaClient } from "@prisma/client";
+import pkgPrisma from "@prisma/client";
+const { PrismaClient } = pkgPrisma;
 
 const app = express();
 const prisma = new PrismaClient();
 app.use(
   cors({
     origin: [
-      "http://192.168.30.102:3000",    
-      "http://localhost:5173",         
-      "http://localhost:3000",         
-      "http://localhost:8080",         
-      "http://127.0.0.1:5500",        
+      "http://192.168.30.102:3000",
+      "http://localhost:5173",
+      "http://localhost:3000",
+      "http://localhost:8080",
+      "http://127.0.0.1:5500",
       "https://f7acfea4e102.ngrok-free.app",
       "https://maintenance-genie-72uvp6qac-bbsfullstacks-projects.vercel.app/admin",
       "https://maintenance-genie-bay.vercel.app",
-      "https://cleint-sys1.vercel.app/"
+      "https://cleint-sys1.vercel.app/",
     ],
-    methods: ['GET', 'POST', 'PUT', 'DELETE'], 
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],  
-    credentials: true,  
-  })
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    credentials: true,
+  }),
 );
 //cron job to update subscriptions daily
 // Refresh the counter every day at midnight
 let counter = 0;
-nodeCron.schedule('0 0 * * *', async () => { 
+nodeCron.schedule("0 0 * * *", async () => {
   try {
     const now = new Date();
-    console.log(`Daily cron job running at: ${now.toISOString()} - Counter: ${counter++}`);
-    const batchSize = 1000; 
+    console.log(
+      `Daily cron job running at: ${now.toISOString()} - Counter: ${counter++}`,
+    );
+    const batchSize = 1000;
     const subscriptionsToUpdate = await prisma.subscription.findMany({
       where: {
         end_date: {
@@ -59,7 +58,9 @@ nodeCron.schedule('0 0 * * *', async () => {
       console.log("No subscriptions to update today.");
       return;
     }
-    const userIds = [...new Set(subscriptionsToUpdate.map((sub) => sub.user.id))];
+    const userIds = [
+      ...new Set(subscriptionsToUpdate.map((sub) => sub.user.id)),
+    ];
     await prisma.$transaction([
       prisma.subscription.updateMany({
         where: {
@@ -84,15 +85,15 @@ nodeCron.schedule('0 0 * * *', async () => {
       }),
     ]);
     console.log(
-      `Updated ${subscriptionsToUpdate.length} subscriptions and ${userIds.length} users.`
+      `Updated ${subscriptionsToUpdate.length} subscriptions and ${userIds.length} users.`,
     );
   } catch (error) {
     console.error("Error in daily subscription cleanup:", error);
   }
 });
 app.use((req, res, next) => {
-  if (req.originalUrl === '/api/payments/webhook') {
-    express.raw({ type: 'application/json' })(req, res, next);
+  if (req.originalUrl === "/api/payments/webhook") {
+    express.raw({ type: "application/json" })(req, res, next);
   } else {
     express.json()(req, res, next);
   }
@@ -100,12 +101,9 @@ app.use((req, res, next) => {
 
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan("dev"));
-app.use('/api/users', userRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/items', addItemRoutes);
-app.use('/api/payments', pay);
+app.use("/api", routes);
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -125,4 +123,3 @@ app.use((err, req, res, next) => {
 });
 app.use(express.static(path.join(__dirname, "public")));
 export default app;
-
