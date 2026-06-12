@@ -22,4 +22,4 @@ RUN mkdir -p uploads
 EXPOSE 8787
 
 # Apply migrations, then start the API
-CMD ["sh", "-c", "npx prisma migrate deploy && node index.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node src/index.js"]
