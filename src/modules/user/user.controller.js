@@ -7,6 +7,7 @@ import {
   register_step_3,
   reset_password,
   update_user_details,
+  verify_forgot_password_otp,
   verify_otp,
 } from "../validations/joi.validations.js";
 // Generic async handler wrapper
@@ -80,11 +81,15 @@ export const loginUser = async (req, res, next) => {
   try {
     const { value, error } = login.validate(req.body);
 
+
     if (error) {
       return res.status(400).json({ message: error.details[0].message });
     }
     const { email, password } = value;
-    const result = await userService.loginUser(email, password);
+    const result = await userService.loginUser({
+      email,
+      password,
+    });
     return res.status(result.statusCode).json(result.data);
   } catch (error) {
     next(error);
@@ -92,7 +97,6 @@ export const loginUser = async (req, res, next) => {
 };
 export const forgotPasswordOTPsend = async (req, res, next) => {
   try {
-
     const { value, error } = forgot_password_otp_send.validate(req.body);
 
     if (error) {
@@ -111,7 +115,6 @@ export const forgotPasswordOTPsend = async (req, res, next) => {
 export const verifyForgotPasswordOTP = async (req, res, next) => {
   try {
     const { value, error } = verify_forgot_password_otp.validate(req.body);
-
     if (error) {
       return res.status(400).json({ message: error.details[0].message });
     }

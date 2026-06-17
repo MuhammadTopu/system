@@ -50,3 +50,8 @@ export const change_password = Joi.object({
     oldPassword: Joi.string().min(8).required(),
     newPassword: Joi.string().min(8).required(),
 });
+
+export const verify_forgot_password_otp = Joi.object({
+    email: Joi.string().email().required(),
+    otp: Joi.string().length(4).required(),
+});
