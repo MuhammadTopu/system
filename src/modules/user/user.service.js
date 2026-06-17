@@ -262,8 +262,6 @@ async registerUserStep3({ token, name, password }) {
 
 //Login
 async loginUser({ email, password }) {
-  console.log("Login attempt with email:", email);
-
   const missingField = ["email", "password"].find(
     (field) => !{ email, password }[field]
   );
