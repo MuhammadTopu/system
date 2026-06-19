@@ -124,17 +124,22 @@ async createMail(data) {
 }
 
 async findUserProfileById(userId) {
-  return prisma.user.findUnique({
+  const user_data = await prisma.user.findUnique({
     where: { id: userId },
     select: {
       id: true,
       name: true,
       email: true,
       avatar: true,
+      address: true,
     },
   });
-}
 
-}
+  if (!user_data) {
+    throw new Error("User not found");
+  }
 
+  return user_data;
+}
+}
 export default UserRepository;
