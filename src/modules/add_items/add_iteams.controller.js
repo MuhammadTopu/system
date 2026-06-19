@@ -177,7 +177,7 @@ export const addItem = async (req, res) => {
           max_tokens: 200,
         },
         {
-          headers: { Authorization: `Bearer ${process.env.CHAT_GPT_API_KEY}` },
+          headers: { Authorization: `Bearer ${process.env.CHAT_GPT_API_KEY || process.env.CHAT_GPT_FALL_BACK_API_KEY}` },
         },
       );
 
@@ -270,7 +270,7 @@ export const generateQuestions = async (req, res) => {
         },
         {
           headers: {
-            Authorization: `Bearer ${process.env.CHAT_GPT_API_KEY}`,
+            Authorization: `Bearer ${process.env.CHAT_GPT_API_KEY || process.env.CHAT_GPT_FALL_BACK_API_KEY}`,
           },
         },
       );

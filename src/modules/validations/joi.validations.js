@@ -47,7 +47,7 @@ export const update_user_details = Joi.object({
 });
 
 export const change_password = Joi.object({
-    oldPassword: Joi.string().min(8).required(),
+    currentPassword: Joi.string().min(8).required(),
     newPassword: Joi.string().min(8).required(),
 });
 

@@ -183,7 +183,6 @@ export const updateUserDetails = async (req, res, next) => {
 export const changePassword = async (req, res, next) => {
   try {
     const { value, error } = change_password.validate(req.body);
-
     if (error) {
       return res.status(400).json({ message: error.details[0].message });
     }
