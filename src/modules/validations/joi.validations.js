@@ -1,11 +1,11 @@
 import Joi from "joi";
 
 export const itemSchema = Joi.object({
-    name: Joi.string().min(3).required(),
+    name: Joi.string().optional(),
     brand: Joi.string().min(3).required(),
     model: Joi.string().min(1).required(),
     purchase_date: Joi.date().required(),
-    total_mileage: Joi.number().required(),
+    total_mileage: Joi.number().optional(),
     year_of_the_model: Joi.string().min(1).required(),
     category: Joi.string().min(1).required(),
 });
