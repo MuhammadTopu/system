@@ -200,6 +200,7 @@ model Notification {
 }
 
 enum Category {
+  Home
   Vehicle
   Appliance
   Electronics
