@@ -7,6 +7,7 @@ import {
   generateOTP,
   sendForgotPasswordOTP,
   sendRegistrationOTPEmail,
+  receiveEmails,
 } from "../../utils/mailService.js";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -753,7 +754,7 @@ export class UserService {
       10000000 + Math.random() * 90000000,
     ).toString();
 
-    const mail = await this.mailRepository.createMail({
+    const mail = await this.userRepository.createMail({
       user_id: userId,
       user_email,
       user_name: userData.name,
@@ -762,11 +763,7 @@ export class UserService {
       token: ticketToken,
     });
 
-    await this.mailService.sendToAdmin({
-      user_email,
-      subject,
-      message,
-    });
+    receiveEmails(user_email, subject, message);
 
     return {
       statusCode: 200,
