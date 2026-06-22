@@ -113,6 +113,10 @@ export const addItem = async (req, res) => {
       total_mileage,
     } = value;
 
+    if(category != 'Home' && category != 'Vehicle' && category != 'Appliance' && category != 'Electronics' && category != 'Custom'){
+      return res.status(400).json({ message: "Invalid category" });
+    }
+
     const formattedPurchaseDate = purchase_date
       ? new Date(purchase_date)
       : null;
