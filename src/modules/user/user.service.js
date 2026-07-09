@@ -792,6 +792,14 @@ export class UserService {
         };
       }
 
+      let isPremium = false;
+
+      const subscription = await this.userRepository.findSubscriptionByUserId(userId);
+
+      if (subscription) {
+        isPremium = true;
+      }
+
       const imageUrl = user.avatar
         ? `${process.env.BASE_URL}/uploads/${user.avatar}`
         : null;
@@ -804,6 +812,7 @@ export class UserService {
           data: {
             ...user,
             imageUrl,
+            isPremium,
           },
         },
       };
