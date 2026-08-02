@@ -8,6 +8,12 @@ export const itemSchema = Joi.object({
     total_mileage: Joi.number().optional(),
     year_of_the_model: Joi.string().min(1).required(),
     category: Joi.string().min(1).required(),
+    engine: Joi.string().optional(),
+    transmission: Joi.string().optional(),
+    drivetrain: Joi.string().optional(),
+    current_mileage: Joi.number().optional(),
+    average_mileage_per_year: Joi.number().optional(),
+    user_notes: Joi.string().optional(),
 });
 
 export const register_step_1_email = Joi.object({

@@ -13,7 +13,9 @@ import {
     updateStatusOfTask,
     getAllcomletedTasksForUser,
     deleteTask,
-    deleteItem
+    deleteItem,
+    submitAnswers,
+    changeTaskStatus
 } from './add_iteams.controller.js';
 const router = express.Router();
 
@@ -26,6 +28,10 @@ router.get('/get-all-completed-tasks', verifyUser("USER"), getAllcomletedTasksFo
 
 //generate questions for an item
 router.get("/:id/questions", verifyUser("USER"), generateQuestions);
+
+//submit answers for an item
+router.post("/:id/submit-answers", verifyUser("USER"), submitAnswers);
+
 //generate tasks for an item
 router.post("/:id/generate-tasks", verifyUser("USER"), generateTasks);
 //get all tasks for an item
@@ -37,7 +43,8 @@ router.get('/get-item/:id', verifyUser("USER"), getItemById);
 //upload maintaincne history
 router.post('/upload-maintenance-history/:id', verifyUser("USER"), upload.single('img'), uploadReceipt);
 
-router.patch('/toggle-item-status/:id', verifyUser("USER"), updateStatusOfTask)
+// router.patch('/toggle-item-status/:id', verifyUser("USER"), updateStatusOfTask)
+router.patch('/toggle-task-status/:id', verifyUser("USER"), changeTaskStatus)
 
 //delete a task
 router.delete('/delete-task/:id', verifyUser("USER"), deleteTask)

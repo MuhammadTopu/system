@@ -220,9 +220,16 @@ model Item {
   model             String?
   purchase_date     DateTime?
   total_mileage     Float?
+  average_mileage_per_year   Float?
+  engine            String?
+  current_mileage   Float?
+  transmission      String?
+  drivetrain       String?
+  current_date       DateTime?
   year_of_the_model String?
   image_url         String?
   category          Category? @default(Custom)
+  user_notes       String?
   service_intervals String[]
   forum_suggestions String[]
 
@@ -232,8 +239,17 @@ model Item {
 }
 
 enum Task_Status {
-  Due
-  Completed
+  DueNow
+  Upcoming
+  Future
+  Overdue
+  Complete
+}
+
+enum Task_Priority {
+  High
+  Medium
+  Low
 }
 
 model Tasks {
@@ -246,22 +262,28 @@ model Tasks {
   user_id String
   user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
-  upcoming_task          String?
-  item_name              String
-  description            String?
-  item_last_service_date DateTime?
-  receipt_url            String?
-  status                 Task_Status @default(Due)
-  last_date              DateTime?
-  maintenance_history    String[]
-  shop_suggestions       Json?
+  upcoming_task              String?
+  item_name                  String
+  description                String?
+  category                   String?
+  recommended_interval       String?
+  last_service_assumption    String?
+  next_due_mileage           String?
+  next_due_date              String?
+  priority                   Task_Priority?
+  manufacturer_interval_uncertain Boolean @default(true)
+  item_last_service_date     DateTime?
+  receipt_url                String?
+  status                     Task_Status @default(DueNow)
+  last_date                  DateTime?
+  maintenance_history        String[]
+  shop_suggestions           Json?
 
   @@unique([item_id, upcoming_task])
   @@index([item_id])
   @@index([user_id])
   @@map("tasks")
 }
-
 enum Mail_Status {
   Solved
   Pending
@@ -308,12 +330,55 @@ model General_Settings {
   timezone      String?
 }
 
-model Questions {
-  id         String   @id @default(cuid())
-  created_at DateTime @default(now())
-  question   String[]
-  itemId     String   @unique
-  item       Item     @relation(fields: [itemId], references: [id])
+// model Questions {
+//   id         String   @id @default(cuid())
+//   created_at DateTime @default(now())
+//   question   String[]
+//   itemId     String   @unique
+//   item       Item     @relation(fields: [itemId], references: [id])
 
+//   @@map("questions")
+// }
+
+
+enum OptionType {
+  Yes
+  No
+  Planned
+}
+
+enum PriorityLevel {
+  High
+  Medium
+  Low
+}
+
+model Questions {
+  id              String           @id @default(cuid())
+  created_at      DateTime         @default(now())
+  itemId          String
+  item            Item             @relation(fields: [itemId], references: [id])
+  maintenanceItem String           // e.g. "Water Pump"
+  itemKey         String           // e.g. "water_pump"
+  category        String
+  priority        PriorityLevel
+  question        String
+  reason          String
+  userAnswer      OptionType?
+  recommendations Recommendation[]
+
+  @@unique([itemId, itemKey])
   @@map("questions")
+}
+
+model Recommendation {
+  id         String     @id @default(cuid())
+  questionId String
+  question   Questions  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  option     OptionType // Yes / No / Planned
+  status     String     // "Complete" / "Recommended" / "Planned" etc.
+  message    String
+
+  @@unique([questionId, option])
+  @@map("recommendations")
 }
