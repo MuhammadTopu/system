@@ -11,3 +11,7 @@ coverage
 .vscode
 .DS_Store
 *.md
+uploads
+.dockerignore
+Dockerfile
+docker-compose*.yml

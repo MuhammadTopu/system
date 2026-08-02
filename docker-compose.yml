@@ -1,6 +1,6 @@
 services:
   app:
-    build: .
+    image: topu409/system-app:latest
     container_name: system-app
     ports:
       - "8787:8787"
@@ -15,11 +15,9 @@ services:
     container_name: system-db
     restart: always
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: newpassword123
-      POSTGRES_DB: testy
-    ports:
-      - "5454:5432"
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     volumes:
       - system_pg:/var/lib/postgresql/data
 

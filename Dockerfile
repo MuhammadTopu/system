@@ -1,25 +1,31 @@
-FROM node:20-bookworm-slim
+# ---- Build stage ----
+FROM node:20-bookworm-slim AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY prisma ./prisma
+RUN npx prisma generate
+
+COPY . .
+
+# ---- Production stage ----
+FROM node:20-bookworm-slim AS runner
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=8787
 
-# Install dependencies first for better Docker layer caching
-COPY package*.json ./
-RUN npm ci
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/src ./src
 
-# Generate Prisma client at build time
-COPY prisma ./prisma
-RUN npx prisma generate
-
-# Copy the rest of the application
-COPY . .
-
-# Ensure upload directory exists in container
 RUN mkdir -p uploads
 
 EXPOSE 8787
 
-# Apply migrations, then start the API
 CMD ["sh", "-c", "npx prisma migrate deploy && node src/index.js"]
