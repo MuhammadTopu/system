@@ -1574,6 +1574,14 @@ export const getAllItems = async (req, res) => {
         category: true,
         name: true,
         model: true,
+        brand: true,
+        year_of_the_model: true,
+        engine: true,
+        transmission: true,
+        drivetrain: true,
+        current_mileage: true,
+        average_mileage_per_year: true,
+        user_notes: true,
       },
     });
 
