@@ -106,6 +106,13 @@ async updatePasswordById({ userId, password }) {
   });
 }
 
+async updateFcmToken(userId, fcm_token) {
+  return prisma.user.update({
+    where: { id: userId },
+    data: { fcm_token },
+  });
+}
+
 
 async findUserByEmailAndId({ email, id, type }) {
   return prisma.user.findFirst({

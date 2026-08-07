@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Push Notification Test — Maintenance Genie</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --card: #ffffff;
+      --border: #e3e7eb;
+      --text: #1a1d21;
+      --muted: #6b7280;
+      --primary: #4f46e5;
+      --primary-hover: #4338ca;
+      --success-bg: #eafaf0;
+      --success-border: #2e9e5b;
+      --error: #d92d20;
+      --log-bg: #0f172a;
+      --log-text: #cbd5e1;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #14161a;
+        --card: #1d2025;
+        --border: #2c3036;
+        --text: #edeef0;
+        --muted: #9aa1ab;
+        --primary: #6366f1;
+        --primary-hover: #7981f5;
+        --success-bg: #10241a;
+        --success-border: #34c471;
+        --error: #f37066;
+        --log-bg: #0a0c10;
+        --log-text: #a9b4c2;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 40px 16px;
+      display: flex;
+      justify-content: center;
+    }
+    .container { width: 100%; max-width: 560px; }
+
+    .header { margin-bottom: 20px; }
+    .header .eyebrow {
+      font-size: 12px; font-weight: 600; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--primary);
+    }
+    .header h1 { font-size: 22px; margin: 4px 0 8px; }
+    .header p { font-size: 14px; color: var(--muted); line-height: 1.5; margin: 0; }
+    .header code {
+      background: var(--border); padding: 1px 6px; border-radius: 4px; font-size: 12.5px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 16px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    .card h2 {
+      font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--muted); margin: 0 0 14px;
+    }
+
+    .field { margin-bottom: 14px; }
+    .field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+    .field input {
+      width: 100%; font-size: 15px; padding: 10px 12px;
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg); color: var(--text);
+    }
+    .field input:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+
+    button {
+      width: 100%; font-size: 15px; font-weight: 600; padding: 11px 18px;
+      border: none; border-radius: 8px; cursor: pointer;
+      background: var(--primary); color: #fff;
+      transition: background 0.15s ease;
+    }
+    button:hover:not(:disabled) { background: var(--primary-hover); }
+    button:disabled { cursor: not-allowed; opacity: 0.55; }
+
+    .banner {
+      font-size: 13px; padding: 10px 12px; border-radius: 8px; margin-bottom: 14px;
+      background: rgba(217,45,32,0.1); color: var(--error);
+      border: 1px solid rgba(217,45,32,0.25);
+    }
+
+    .token-box {
+      word-break: break-all; background: var(--bg); border: 1px solid var(--border);
+      padding: 10px 12px; border-radius: 8px; margin-top: 12px;
+      font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted);
+    }
+
+    #notification-list:empty::after {
+      content: "Nothing yet — log in to trigger a push.";
+      font-size: 13px; color: var(--muted); font-style: italic;
+    }
+    .notification-card {
+      background: var(--success-bg); border-left: 3px solid var(--success-border);
+      border-radius: 6px; padding: 12px 14px; margin-bottom: 10px;
+    }
+    .notification-card .title { font-weight: 600; font-size: 14.5px; }
+    .notification-card .body { font-size: 13.5px; color: var(--muted); margin-top: 2px; }
+    .notification-card .time { font-size: 11px; color: var(--muted); margin-top: 6px; opacity: 0.8; }
+
+    #log {
+      margin-top: 16px; padding: 12px 14px; background: var(--log-bg); color: var(--log-text);
+      border-radius: 8px; white-space: pre-wrap; word-break: break-word;
+      font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.6;
+      max-height: 220px; overflow-y: auto;
+    }
+    #log:empty::after { content: "Activity log will appear here."; opacity: 0.6; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="eyebrow">Maintenance Genie</div>
+      <h1>Push Notification Test</h1>
+      <p>
+        Log in with real credentials below. This page requests notification
+        permission, generates an FCM token, and sends it to
+        <code>/api/users/login</code> along with your email and password. The
+        server saves the token and pushes one notification immediately, then a
+        follow-up a few seconds later.
+      </p>
+    </div>
+
+    <p id="vapid-warning" class="banner" style="display:none">
+      VAPID_KEY is empty — set it in the script before this will work. Get it from
+      Firebase Console → Project Settings → Cloud Messaging → Web Push certificates.
+    </p>
+
+    <div class="card">
+      <h2>Login</h2>
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" type="email" placeholder="you@example.com" value="sswsy67767@minitts.net" />
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" type="password" placeholder="••••••••" value="1234567891" />
+      </div>
+      <button id="login-btn">Login &amp; send test push</button>
+      <div id="token-box" class="token-box" style="display:none"></div>
+    </div>
+
+    <div class="card">
+      <h2>Notifications received</h2>
+      <div id="notification-list"></div>
+    </div>
+
+    <div id="log"></div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/12.17.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.17.1/firebase-messaging-compat.js"></script>
+  <script>
+    // TODO: paste your Web Push certificate key pair from
+    // Firebase Console → Project Settings → Cloud Messaging → Web Push certificates
+    const VAPID_KEY = "BLwLkO9v9r0DBih38nPKH24n978oxa3Y37Ivb5WkjUTEO4t7qXTV5T-3VhhPEFK6Pm30cQ2QTVL7zBikr3QQlnY";
+
+    // This page is served via Live Server (127.0.0.1:5500) while the API runs
+    // on the actual backend port — point requests at the real server explicitly
+    // instead of relying on relative URLs, which would hit Live Server itself.
+    const API_BASE_URL = "http://localhost:8070";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyADKguakddYhon3a3bYa6Fs51nD-NGxYnk",
+      authDomain: "kristen-7362e.firebaseapp.com",
+      projectId: "kristen-7362e",
+      storageBucket: "kristen-7362e.firebasestorage.app",
+      messagingSenderId: "473592403679",
+      appId: "1:473592403679:web:61de51bf8423b1a27cbb6a",
+      measurementId: "G-7Y25FGBVH6",
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const messaging = firebase.messaging();
+
+    const logEl = document.getElementById("log");
+    const notificationListEl = document.getElementById("notification-list");
+    const tokenBox = document.getElementById("token-box");
+    const loginBtn = document.getElementById("login-btn");
+    const vapidWarning = document.getElementById("vapid-warning");
+    const emailInput = document.getElementById("email");
+    const passwordInput = document.getElementById("password");
+
+    if (!VAPID_KEY) vapidWarning.style.display = "block";
+
+    function log(message) {
+      const time = new Date().toLocaleTimeString();
+      logEl.textContent += `[${time}] ${message}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+      console.log(message);
+    }
+
+    function showNotificationCard(title, body) {
+      const card = document.createElement("div");
+      card.className = "notification-card";
+      card.innerHTML = `
+        <div class="title"></div>
+        <div class="body"></div>
+        <div class="time"></div>
+      `;
+      card.querySelector(".title").textContent = title || "Notification";
+      card.querySelector(".body").textContent = body || "";
+      card.querySelector(".time").textContent =
+        new Date().toLocaleTimeString();
+      notificationListEl.prepend(card);
+    }
+
+    // Foreground messages (tab focused) don't auto-display — show them manually.
+    messaging.onMessage((payload) => {
+      const { title, body } = payload.notification || {};
+      log(`Push received: "${title}" — ${body}`);
+      showNotificationCard(title, body);
+      if (Notification.permission === "granted") {
+        new Notification(title || "Notification", { body: body || "" });
+      }
+    });
+
+    async function login() {
+      loginBtn.disabled = true;
+      try {
+        const email = emailInput.value.trim();
+        const password = passwordInput.value;
+        if (!email || !password) {
+          log("Enter both email and password first.");
+          return;
+        }
+
+        log("Requesting notification permission...");
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") {
+          log("Permission denied — cannot receive push notifications.");
+          return;
+        }
+
+        log("Registering service worker...");
+        // Relative (no leading slash) so it resolves next to this page
+        // regardless of whether Live Server's root is the repo root or public/.
+        const swRegistration = await navigator.serviceWorker.register(
+          "firebase-messaging-sw.js",
+        );
+
+        log("Fetching FCM token...");
+        const fcm_token = await messaging.getToken({
+          vapidKey: VAPID_KEY,
+          serviceWorkerRegistration: swRegistration,
+        });
+
+        tokenBox.style.display = "block";
+        tokenBox.textContent = fcm_token;
+        log("Got FCM token (shown above).");
+
+        log(`Calling ${API_BASE_URL}/api/users/login...`);
+        const res = await fetch(`${API_BASE_URL}/api/users/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password, fcm_token }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          log(`Login failed: ${JSON.stringify(data)}`);
+          return;
+        }
+
+        log(`Login succeeded — watch for the push notifications now.`);
+      } catch (err) {
+        log(`Error: ${err.message}`);
+      } finally {
+        loginBtn.disabled = false;
+      }
+    }
+
+    loginBtn.addEventListener("click", login);
+  </script>
+</body>
+</html>

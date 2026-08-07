@@ -33,6 +33,7 @@ export const register_step_3 = Joi.object({
 export const login = Joi.object({
     email: Joi.string().email().required(),
     password: Joi.string().min(8).required(),
+    fcm_token: Joi.string().optional(),
 });
 
 export const forgot_password_otp_send = Joi.object({

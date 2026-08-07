@@ -14,6 +14,9 @@ import { fileURLToPath } from "url";
 import pkg from "jsonwebtoken";
 import UserRepository from "../../common/repository/user.repository.js";
 import FileService from "../../common/services/file.service.js";
+import firebaseService from "../firebase/firebase.service.js";
+
+const FIVE_SECONDS = 5 * 1000;
 
 const prisma = new PrismaClient();
 const { sign, verify } = pkg;
@@ -253,7 +256,7 @@ export class UserService {
   }
 
   //Login
-  async loginUser({ email, password }) {
+  async loginUser({ email, password, fcm_token }) {
     const missingField = ["email", "password"].find(
       (field) => !{ email, password }[field],
     );
@@ -317,6 +320,29 @@ export class UserService {
       process.env.JWT_SECRET,
       { expiresIn: "100d" },
     );
+
+    // Save/refresh the device's push token if one was passed in
+    if (fcm_token && fcm_token !== user.fcm_token) {
+      await this.userRepository.updateFcmToken(user.id, fcm_token);
+      user.fcm_token = fcm_token;
+    }
+
+    // send notification using FirebaseService if user has fcm_token
+    if (user.fcm_token) {
+      await firebaseService.send(user.id, {
+        title: "Login Successful",
+        body: "You have successfully logged in.",
+        type: "notification",
+      });
+
+      setTimeout(() => {
+        firebaseService.send(user.id, {
+          title: "Still there?",
+          body: "This is your 5-second follow-up notification.",
+          type: "notification",
+        });
+      }, FIVE_SECONDS);
+    }
 
     return {
       statusCode: 200,
@@ -794,7 +820,8 @@ export class UserService {
 
       let isPremium = false;
 
-      const subscription = await this.userRepository.findSubscriptionByUserId(userId);
+      const subscription =
+        await this.userRepository.findSubscriptionByUserId(userId);
 
       if (subscription) {
         isPremium = true;

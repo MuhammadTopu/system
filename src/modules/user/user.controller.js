@@ -81,14 +81,14 @@ export const loginUser = async (req, res, next) => {
   try {
     const { value, error } = login.validate(req.body);
 
-
     if (error) {
       return res.status(400).json({ message: error.details[0].message });
     }
-    const { email, password } = value;
+    const { email, password, fcm_token } = value;
     const result = await userService.loginUser({
       email,
       password,
+      fcm_token,
     });
     return res.status(result.statusCode).json(result.data);
   } catch (error) {

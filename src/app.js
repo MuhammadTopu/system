@@ -6,10 +6,12 @@ import path from "path";
 import routes from "./routes/index.js";
 import nodeCron from "node-cron";
 import pkgPrisma from "@prisma/client";
+import { initFirebase } from "./modules/firebase/firebase.service.js";
 const { PrismaClient } = pkgPrisma;
 
 const app = express();
 const prisma = new PrismaClient();
+initFirebase();
 app.use(
   cors({
     origin: [
@@ -108,6 +110,7 @@ app.get("/", (req, res) => {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use(express.static(path.join(__dirname, "public")));
 
 app.use((req, res, next) => {
   res.status(404).json({
@@ -121,5 +124,4 @@ app.use((err, req, res, next) => {
     error: err.message,
   });
 });
-app.use(express.static(path.join(__dirname, "public")));
 export default app;
