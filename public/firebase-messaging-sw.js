@@ -2,12 +2,12 @@ importScripts("https://www.gstatic.com/firebasejs/12.17.1/firebase-app-compat.js
 importScripts("https://www.gstatic.com/firebasejs/12.17.1/firebase-messaging-compat.js");
 
 firebase.initializeApp({
-  apiKey: "AIzaSyADKguakddYhon3a3bYa6Fs51nD-NGxYnk",
-  authDomain: "kristen-7362e.firebaseapp.com",
-  projectId: "kristen-7362e",
-  storageBucket: "kristen-7362e.firebasestorage.app",
-  messagingSenderId: "473592403679",
-  appId: "1:473592403679:web:61de51bf8423b1a27cbb6a",
+  apiKey: "AIzaSyArT1oDarFsH2me25ZWHXs0eY7oz0c3irA",
+  authDomain: "rrsc-92ef2.firebaseapp.com",
+  projectId: "rrsc-92ef2",
+  storageBucket: "rrsc-92ef2.firebasestorage.app",
+  messagingSenderId: "668126403636",
+  appId: "1:668126403636:web:ceea18e1367e0572c57e61",
 });
 
 const messaging = firebase.messaging();

@@ -167,9 +167,10 @@
   <script src="https://www.gstatic.com/firebasejs/12.17.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/12.17.1/firebase-messaging-compat.js"></script>
   <script>
-    // TODO: paste your Web Push certificate key pair from
-    // Firebase Console → Project Settings → Cloud Messaging → Web Push certificates
-    const VAPID_KEY = "BLwLkO9v9r0DBih38nPKH24n978oxa3Y37Ivb5WkjUTEO4t7qXTV5T-3VhhPEFK6Pm30cQ2QTVL7zBikr3QQlnY";
+    // TODO: this VAPID key was generated for the OLD project (kristen-7362e) and will
+    // NOT work with rrsc-92ef2 — generate a new one from Firebase Console →
+    // Project Settings → Cloud Messaging → Web Push certificates (project rrsc-92ef2)
+    const VAPID_KEY = "BLLXR3YaJ9Ib-PXw0P6Uj9VOwQjvRe6mFUwgl3EgQ-eBf82Ps80iU6mXT0ysg7IxIsprDpBoaOUuWA_guI3xFGo";
 
     // This page is served via Live Server (127.0.0.1:5500) while the API runs
     // on the actual backend port — point requests at the real server explicitly
@@ -177,13 +178,13 @@
     const API_BASE_URL = "http://localhost:8070";
 
     const firebaseConfig = {
-      apiKey: "AIzaSyADKguakddYhon3a3bYa6Fs51nD-NGxYnk",
-      authDomain: "kristen-7362e.firebaseapp.com",
-      projectId: "kristen-7362e",
-      storageBucket: "kristen-7362e.firebasestorage.app",
-      messagingSenderId: "473592403679",
-      appId: "1:473592403679:web:61de51bf8423b1a27cbb6a",
-      measurementId: "G-7Y25FGBVH6",
+      apiKey: "AIzaSyArT1oDarFsH2me25ZWHXs0eY7oz0c3irA",
+      authDomain: "rrsc-92ef2.firebaseapp.com",
+      projectId: "rrsc-92ef2",
+      storageBucket: "rrsc-92ef2.firebasestorage.app",
+      messagingSenderId: "668126403636",
+      appId: "1:668126403636:web:ceea18e1367e0572c57e61",
+      measurementId: "G-W1BDEJ09R2",
     };
 
     firebase.initializeApp(firebaseConfig);
