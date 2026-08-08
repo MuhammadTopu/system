@@ -510,16 +510,30 @@ export const addItem = async (req, res) => {
     if (is_subscribed === true && role === "premium") {
       // pass the created item, not req.body, so normalized values are used
       generatedData = await generateItemData(newItem);
-    } else {
+  } else {
       const serviceIntervalPrompt = `
-        Based on the following item details, generate recommended service intervals:
-        - Category: ${category || "Unspecified"}
-        - Brand: ${brand}
-        - Model: ${model}
-        - Total Mileage: ${total_mileage}
-        - Purchase Date: ${purchase_date}
-        Please provide a list of recommended service intervals (e.g., every X miles or every Y months).
-      `;
+Generate a recommended service interval list for the following item.
+
+- Category: ${category || "Unspecified"}
+- Brand: ${brand}
+- Model: ${model}
+- Year: ${year_of_the_model || "Not available"}
+- Engine: ${engine || "Not available"}
+- Current Mileage: ${currentMileage || mileage || "Not available"}
+- Purchase Date: ${purchase_date}
+
+If it is not a vehicle, provide general maintenance intervals instead.
+Make intervals specific to the brand and model where possible.
+
+FORMAT RULES:
+- Return a numbered list only.
+- One service item per line, in exactly this format:
+  1. Service Name - interval
+- Maximum 5 items.
+- No markdown, no bold, no asterisks, no bullet characters.
+- No blank lines.
+- No introduction sentence and no closing sentence.
+`.trim();
 
       const serviceIntervalResponse = await axios.post(
         "https://api.openai.com/v1/chat/completions",
@@ -529,7 +543,8 @@ export const addItem = async (req, res) => {
             { role: "system", content: "You are a helpful assistant." },
             { role: "user", content: serviceIntervalPrompt },
           ],
-          max_tokens: 200,
+          max_tokens: 700,
+          temperature: 0.7,
         },
         {
           headers: {
@@ -539,12 +554,13 @@ export const addItem = async (req, res) => {
       );
 
       generatedData = {
-        service_intervals:
-          serviceIntervalResponse.data.choices[0].message.content.split("\n"),
+        service_intervals: serviceIntervalResponse.data.choices[0].message.content
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0),
         forum_suggestions: [],
       };
     }
-
     if (generatedData) {
       const updatedItem = await prisma.item.update({
         where: { id: newItem.id },
