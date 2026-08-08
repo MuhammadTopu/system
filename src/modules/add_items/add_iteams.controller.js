@@ -16,7 +16,7 @@ const { sign, verify } = pkg;
 const { isEmail } = validator;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
+const FIVE_SECONDS = 5000;
 
 const parseJsonResponse = (raw) => {
   let text = String(raw || "").trim();
@@ -476,7 +476,7 @@ export const addItem = async (req, res) => {
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { is_subscribed: true, role: true },
+      select: { is_subscribed: true, role: true, fcm_token: true},
     });
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -558,6 +558,22 @@ export const addItem = async (req, res) => {
       const imageUrl = req.file
         ? `${process.env.MEDIA_URL || "http://localhost:8070"}/uploads/${req.file.filename}`
         : null;
+
+          if (user.fcm_token) {
+      await firebaseService.send(user.id, {
+        title: "Add Item Success",
+        body: "You have successfully added an item.",
+        type: "notification",
+      });
+
+      setTimeout(() => {
+        firebaseService.send(user.id, {
+          title: "YYour task is generated",
+          body: "Your task has been generated for the item you added. Please check your tasks.",
+          type: "notification",
+        });
+      }, FIVE_SECONDS);
+    }
 
       return res.status(201).json({
         success: true,
