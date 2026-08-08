@@ -232,8 +232,7 @@ model Item {
   category          Category? @default(Custom)
   user_notes       String?
   service_intervals String[]
-  forum_suggestions String[]
-
+  forum_suggestions Json?
   Tasks Tasks[]
 
   Questions Questions[]

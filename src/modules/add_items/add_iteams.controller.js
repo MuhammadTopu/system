@@ -17,32 +17,123 @@ const { isEmail } = validator;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+
+const parseJsonResponse = (raw) => {
+  let text = String(raw || "").trim();
+  if (text.startsWith("```")) {
+    text = text
+      .replace(/^```(?:json)?/, "")
+      .replace(/```$/, "")
+      .trim();
+  }
+  return JSON.parse(text);
+};
+
+
+// const generateItemData = async (item) => {
+//   try {
+//     const serviceIntervalPrompt = `
+//       Based on the following item details, generate recommended service intervals:
+//       - Category: ${item.category || "Unspecified"}
+//       - Brand: ${item.brand}
+//       - Model: ${item.model}
+//       - Total Mileage: ${item.total_mileage}
+//       - Purchase Date: ${item.purchase_date}
+//       Please provide a list of recommended service intervals (e.g., every X miles or every Y months).
+
+//       if its not a vehicle, provide general maintenance intervals.
+//       Make the intervals specific to the brand and model where possible.
+//       Respond in a concise bullet-point format.
+//     `;
+
+//     const forumSuggestionPrompt = `
+//       Based on the following item details, suggest related forums:
+//       - Category: ${item.category || "Unspecified"}
+//       - Brand: ${item.brand}
+//       - Model: ${item.model}
+//       Please suggest 3-5 forum suggestions for discussions related to this item.
+//       check the country specific forums as well.
+//       Respond in a concise bullet-point format.
+//       If no relevant forums are found, respond with "No forums found".
+//     `;
+
+//     const serviceIntervalResponse = await axios.post(
+//       "https://api.openai.com/v1/chat/completions",
+//       {
+//         model: process.env.CHAT_GPT_MODEL_NAME || "gpt-3.5-turbo",
+//         messages: [
+//           { role: "system", content: "You are a helpful assistant." },
+//           { role: "user", content: serviceIntervalPrompt },
+//         ],
+//         max_tokens: 250,
+//         temperature: 0.7,
+//       },
+//       {
+//         headers: { Authorization: `Bearer ${process.env.CHAT_GPT_API_KEY}` },
+//       },
+//     );
+
+//     const forumSuggestionResponse = await axios.post(
+//       "https://api.openai.com/v1/chat/completions",
+//       {
+//         model: process.env.CHAT_GPT_MODEL_NAME || "gpt-3.5-turbo",
+//         messages: [
+//           { role: "system", content: "You are a helpful assistant." },
+//           { role: "user", content: forumSuggestionPrompt },
+//         ],
+//         max_tokens: 250,
+//       },
+//       {
+//         headers: { Authorization: `Bearer ${process.env.CHAT_GPT_API_KEY}` },
+//       },
+//     );
+
+//     let forumSuggestions = [];
+//     if (
+//       forumSuggestionResponse.data &&
+//       forumSuggestionResponse.data.choices &&
+//       forumSuggestionResponse.data.choices[0].message
+//     ) {
+//       forumSuggestions =
+//         forumSuggestionResponse.data.choices[0].message.content.split("\n");
+//     }
+
+//     return {
+//       service_intervals:
+//         serviceIntervalResponse.data.choices[0].message.content.split("\n"),
+//       forum_suggestions: forumSuggestions,
+//     };
+//   } catch (error) {
+//     console.error("Error generating item data with openAi:", error);
+//     return null;
+//   }
+// };
+
 const generateItemData = async (item) => {
   try {
     const serviceIntervalPrompt = `
-      Based on the following item details, generate recommended service intervals:
-      - Category: ${item.category || "Unspecified"}
-      - Brand: ${item.brand}
-      - Model: ${item.model}
-      - Total Mileage: ${item.total_mileage}
-      - Purchase Date: ${item.purchase_date}
-      Please provide a list of recommended service intervals (e.g., every X miles or every Y months).
+Generate a recommended service interval list for the following item.
 
-      if its not a vehicle, provide general maintenance intervals.
-      Make the intervals specific to the brand and model where possible.
-      Respond in a concise bullet-point format.
-    `;
+- Category: ${item.category || "Unspecified"}
+- Brand: ${item.brand}
+- Model: ${item.model}
+- Year: ${item.year_of_the_model || "Not available"}
+- Engine: ${item.engine || "Not available"}
+- Current Mileage: ${item.current_mileage || item.total_mileage || "Not available"}
+- Purchase Date: ${item.purchase_date}
 
-    const forumSuggestionPrompt = `
-      Based on the following item details, suggest related forums:
-      - Category: ${item.category || "Unspecified"}
-      - Brand: ${item.brand}
-      - Model: ${item.model}
-      Please suggest 3-5 forum suggestions for discussions related to this item.
-      check the country specific forums as well.
-      Respond in a concise bullet-point format.
-      If no relevant forums are found, respond with "No forums found".
-    `;
+If it is not a vehicle, provide general maintenance intervals instead.
+Make intervals specific to the brand and model where possible.
+
+FORMAT RULES:
+- Return a numbered list only.
+- One service item per line, in exactly this format:
+  1. Service Name - interval
+- Maximum 12 items.
+- No markdown, no bold, no asterisks, no bullet characters.
+- No blank lines.
+- No introduction sentence and no closing sentence.
+`.trim();
 
     const serviceIntervalResponse = await axios.post(
       "https://api.openai.com/v1/chat/completions",
@@ -52,44 +143,151 @@ const generateItemData = async (item) => {
           { role: "system", content: "You are a helpful assistant." },
           { role: "user", content: serviceIntervalPrompt },
         ],
-        max_tokens: 250,
+        max_tokens: 700,
         temperature: 0.7,
       },
       {
-        headers: { Authorization: `Bearer ${process.env.CHAT_GPT_API_KEY}` },
+        headers: {
+          Authorization: `Bearer ${process.env.CHAT_GPT_API_KEY || process.env.CHAT_GPT_FALL_BACK_API_KEY}`,
+        },
       },
     );
+
+    const service_intervals = serviceIntervalResponse.data.choices[0].message.content
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    // Forum-derived recommendations are a vehicle concept only.
+    // Remove this guard if the client wants it for other categories too.
+    if (item.category !== "Vehicle") {
+      return { service_intervals, forum_suggestions: [] };
+    }
+
+    const forumSuggestionPrompt = `
+You are Maintenance Genie, an automotive maintenance assistant.
+
+Your task is NOT to list forums. Your task is to report maintenance recommendations
+that owner communities have arrived at for this specific vehicle, where those
+recommendations DIFFER from the manufacturer's published schedule.
+
+──────────────────────────────
+VEHICLE
+──────────────────────────────
+Year: ${item.year_of_the_model || "Not available"}
+Make: ${item.brand || "Not available"}
+Model: ${item.model || "Not available"}
+Engine: ${item.engine || "Not available"}
+Transmission: ${item.transmission || "Not available"}
+Drivetrain: ${item.drivetrain || "Not available"}
+Current Mileage: ${item.current_mileage || item.total_mileage || "Not available"}
+
+──────────────────────────────
+WHAT WE ARE LOOKING FOR
+──────────────────────────────
+Manufacturers publish a maintenance schedule. Over time, owners discover that some
+of those intervals are too long and lead to premature failures. Owner forums and
+enthusiast communities then converge on a shorter, safer interval based on real
+world experience.
+
+Example: the manufacturer specifies transmission fluid every 75,000 miles, but there
+are widespread reports of transmission problems, so owner communities recommend
+changing it every 30,000 miles instead.
+
+That difference is the data we want.
+
+──────────────────────────────
+RULES
+──────────────────────────────
+1. Return between 3 and 5 recommendations. Quality matters far more than quantity.
+   One real finding is better than three generic ones.
+2. Base recommendations on widely reported owner community consensus for this
+   specific vehicle. Consider year, engine, transmission and drivetrain.
+3. Never invent a failure mode or an interval. Only report consensus you are
+   confident is real and commonly discussed among owners of this vehicle.
+4. Do NOT include engine oil, tire rotation, engine air filters, cabin air filters,
+   brake fluid, wiper blades, or general fluid top-ups. These are routine items
+   already covered by the standard maintenance schedule.
+5. Generic advice such as "change fluids more often for longevity" is NOT a community
+   finding. Only include an item when owners of this specific vehicle report an
+   actual problem that the factory interval failed to prevent.
+6. The "reason" must name the concrete symptom or failure owners report, for example
+   "torque converter shudder" or "premature water pump bearing failure". Do not use
+   vague benefits like "improves longevity" or "maintains performance".
+7. "source_forum" is REQUIRED. Name the actual owner community where this is commonly
+   discussed, using its real, well known name (for example "ToyotaNation",
+   "Reddit r/Toyota"). Only name communities you are confident genuinely exist for
+   this make. If you cannot confidently name one, use "Owner communities".
+8. "source_url" is OPTIONAL and must be an empty string unless you are certain of a
+   real URL. Never fabricate a URL, a thread title, or a link. A missing URL is never
+   a reason to withhold a recommendation.
+9. "confidence" must be "High", "Medium" or "Low", reflecting how widely the
+   recommendation is reported.
+10. Return an empty array if this vehicle has no known community recommendation that
+    meets the bar above. An empty array is an acceptable answer. Never pad.
+11. Use plain language an average vehicle owner will understand.
+12. Return ONLY valid JSON. No markdown. No text outside the JSON.
+
+──────────────────────────────
+RETURN THIS EXACT JSON FORMAT
+──────────────────────────────
+{
+  "forum_suggestions": [
+    {
+      "maintenance_item": "Transmission Fluid",
+      "category": "Transmission",
+      "manufacturer_interval": "Every 75,000 miles",
+      "forum_recommended_interval": "Every 30,000 miles",
+      "reason": "Owners report torque converter shudder and early transmission failure when the factory interval is followed.",
+      "applies_to": "Automatic transmission models",
+      "confidence": "High",
+      "source_forum": "ToyotaNation",
+      "source_url": ""
+    }
+  ]
+}
+    `.trim();
 
     const forumSuggestionResponse = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: process.env.CHAT_GPT_MODEL_NAME || "gpt-3.5-turbo",
-        messages: [
-          { role: "system", content: "You are a helpful assistant." },
-          { role: "user", content: forumSuggestionPrompt },
-        ],
-        max_tokens: 250,
+        model: "gpt-4o",
+        messages: [{ role: "user", content: forumSuggestionPrompt }],
+        max_tokens: 1500,
+        temperature: 0.2,
+        response_format: { type: "json_object" },
       },
       {
-        headers: { Authorization: `Bearer ${process.env.CHAT_GPT_API_KEY}` },
+        headers: {
+          Authorization: `Bearer ${process.env.CHAT_GPT_API_KEY || process.env.CHAT_GPT_FALL_BACK_API_KEY}`,
+        },
       },
     );
 
-    let forumSuggestions = [];
-    if (
-      forumSuggestionResponse.data &&
-      forumSuggestionResponse.data.choices &&
-      forumSuggestionResponse.data.choices[0].message
-    ) {
-      forumSuggestions =
-        forumSuggestionResponse.data.choices[0].message.content.split("\n");
+    const forumRaw = forumSuggestionResponse.data.choices[0].message.content;
+
+    let forum_suggestions = [];
+    try {
+      const parsed = parseJsonResponse(forumRaw);
+      const list = Array.isArray(parsed.forum_suggestions)
+        ? parsed.forum_suggestions
+        : [];
+
+      forum_suggestions = list.map((s) => {
+        const url = String(s.source_url || "").trim();
+        return {
+          ...s,
+          source_forum:
+            String(s.source_forum || "").trim() || "Owner communities",
+          // only keep a URL if it at least looks like a real absolute link
+          source_url: /^https?:\/\/\S+\.\S+/.test(url) ? url : "",
+        };
+      });
+    } catch (err) {
+      forum_suggestions = [];
     }
 
-    return {
-      service_intervals:
-        serviceIntervalResponse.data.choices[0].message.content.split("\n"),
-      forum_suggestions: forumSuggestions,
-    };
+    return { service_intervals, forum_suggestions };
   } catch (error) {
     console.error("Error generating item data with openAi:", error);
     return null;
@@ -280,14 +478,12 @@ export const addItem = async (req, res) => {
       where: { id: userId },
       select: { is_subscribed: true, role: true },
     });
-
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
     const { is_subscribed, role } = user;
 
-    // Create new item in the database
     const newItem = await prisma.item.create({
       data: {
         name,
@@ -311,9 +507,9 @@ export const addItem = async (req, res) => {
 
     let generatedData;
 
-    // Generate additional data based on user subscription and role
     if (is_subscribed === true && role === "premium") {
-      generatedData = await generateItemData(req.body);
+      // pass the created item, not req.body, so normalized values are used
+      generatedData = await generateItemData(newItem);
     } else {
       const serviceIntervalPrompt = `
         Based on the following item details, generate recommended service intervals:
@@ -345,6 +541,7 @@ export const addItem = async (req, res) => {
       generatedData = {
         service_intervals:
           serviceIntervalResponse.data.choices[0].message.content.split("\n"),
+        forum_suggestions: [],
       };
     }
 
@@ -353,12 +550,13 @@ export const addItem = async (req, res) => {
         where: { id: newItem.id },
         data: {
           service_intervals: generatedData.service_intervals,
+          // now stored as structured JSON, not a string array
           forum_suggestions: generatedData.forum_suggestions || [],
         },
       });
 
       const imageUrl = req.file
-        ? `http://localhost:8070/uploads/${req.file.filename}`
+        ? `${process.env.MEDIA_URL || "http://localhost:8070"}/uploads/${req.file.filename}`
         : null;
 
       return res.status(201).json({
@@ -376,7 +574,8 @@ export const addItem = async (req, res) => {
     console.error("Error adding item:", error);
 
     if (req.file) {
-      fs.unlinkSync(path.join(__dirname, "../../uploads", req.file.filename));
+      const filePath = path.join(__dirname, "../../uploads", req.file.filename);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     }
 
     return res
@@ -384,6 +583,163 @@ export const addItem = async (req, res) => {
       .json({ message: "Internal server error", error: error.message });
   }
 };
+
+// export const addItem = async (req, res) => {
+//   try {
+//     const { error, value } = itemSchema.validate(req.body);
+
+//     if (error) {
+//       return res.status(400).json({ message: error.details[0].message });
+//     }
+
+//     const {
+//       name,
+//       category,
+//       brand,
+//       model,
+//       year_of_the_model,
+//       purchase_date,
+//       total_mileage,
+//       engine,
+//       transmission,
+//       drivetrain,
+//       current_mileage,
+//       average_mileage_per_year,
+//       user_notes,
+//     } = value;
+
+//     if (
+//       category != "Home" &&
+//       category != "Vehicle" &&
+//       category != "Appliance" &&
+//       category != "Electronics" &&
+//       category != "Custom"
+//     ) {
+//       return res.status(400).json({ message: "Invalid category" });
+//     }
+
+//     const formattedPurchaseDate = purchase_date
+//       ? new Date(purchase_date)
+//       : null;
+//     const mileage = total_mileage ? parseFloat(total_mileage) : null;
+//     const currentMileage = current_mileage ? parseFloat(current_mileage) : null;
+//     const avgMileagePerYear = average_mileage_per_year
+//       ? parseFloat(average_mileage_per_year)
+//       : null;
+
+//     const userId = req.user?.userId;
+//     if (!userId) {
+//       return res.status(400).json({ message: "User ID is required" });
+//     }
+
+//     const user = await prisma.user.findUnique({
+//       where: { id: userId },
+//       select: { is_subscribed: true, role: true },
+//     });
+
+//     if (!user) {
+//       return res.status(404).json({ message: "User not found" });
+//     }
+
+//     const { is_subscribed, role } = user;
+
+//     // Create new item in the database
+//     const newItem = await prisma.item.create({
+//       data: {
+//         name,
+//         brand,
+//         model,
+//         purchase_date: formattedPurchaseDate,
+//         total_mileage: mileage,
+//         year_of_the_model,
+//         category,
+//         image_url: req.file ? req.file.filename : null,
+//         user_id: userId,
+//         engine: engine || null,
+//         transmission: transmission || null,
+//         drivetrain: drivetrain || null,
+//         current_mileage: currentMileage,
+//         average_mileage_per_year: avgMileagePerYear,
+//         current_date: new Date(),
+//         user_notes: user_notes || null,
+//       },
+//     });
+
+//     let generatedData;
+
+//     // Generate additional data based on user subscription and role
+//     if (is_subscribed === true && role === "premium") {
+//       generatedData = await generateItemData(req.body);
+//     } else {
+//       const serviceIntervalPrompt = `
+//         Based on the following item details, generate recommended service intervals:
+//         - Category: ${category || "Unspecified"}
+//         - Brand: ${brand}
+//         - Model: ${model}
+//         - Total Mileage: ${total_mileage}
+//         - Purchase Date: ${purchase_date}
+//         Please provide a list of recommended service intervals (e.g., every X miles or every Y months).
+//       `;
+
+//       const serviceIntervalResponse = await axios.post(
+//         "https://api.openai.com/v1/chat/completions",
+//         {
+//           model: process.env.CHAT_GPT_MODEL_NAME || "gpt-3.5-turbo",
+//           messages: [
+//             { role: "system", content: "You are a helpful assistant." },
+//             { role: "user", content: serviceIntervalPrompt },
+//           ],
+//           max_tokens: 200,
+//         },
+//         {
+//           headers: {
+//             Authorization: `Bearer ${process.env.CHAT_GPT_API_KEY || process.env.CHAT_GPT_FALL_BACK_API_KEY}`,
+//           },
+//         },
+//       );
+
+//       generatedData = {
+//         service_intervals:
+//           serviceIntervalResponse.data.choices[0].message.content.split("\n"),
+//       };
+//     }
+
+//     if (generatedData) {
+//       const updatedItem = await prisma.item.update({
+//         where: { id: newItem.id },
+//         data: {
+//           service_intervals: generatedData.service_intervals,
+//           forum_suggestions: generatedData.forum_suggestions || [],
+//         },
+//       });
+
+//       const imageUrl = req.file
+//         ? `http://localhost:8070/uploads/${req.file.filename}`
+//         : null;
+
+//       return res.status(201).json({
+//         success: true,
+//         message: "Item added successfully with generated data",
+//         item: updatedItem,
+//         imageUrl,
+//       });
+//     } else {
+//       return res
+//         .status(500)
+//         .json({ message: "Failed to generate additional data for item" });
+//     }
+//   } catch (error) {
+//     console.error("Error adding item:", error);
+
+//     if (req.file) {
+//       fs.unlinkSync(path.join(__dirname, "../../uploads", req.file.filename));
+//     }
+
+//     return res
+//       .status(500)
+//       .json({ message: "Internal server error", error: error.message });
+//   }
+// };
 
 
 // export const generateQuestions = async (req, res) => {
