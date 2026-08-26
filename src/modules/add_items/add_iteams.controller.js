@@ -9,6 +9,7 @@ import axios from "axios";
 import sharp from "sharp";
 import Tesseract from "tesseract.js";
 import { itemSchema } from "../validations/joi.validations.js";
+import firebaseService from "../firebase/firebase.service.js";
 dotenv.config();
 
 const prisma = new PrismaClient();
@@ -929,7 +930,7 @@ maintenance history questions that are unique to this exact vehicle.
 INPUT VARIABLES
 ──────────────────────────────
 Year: ${item.year_of_the_model || "Not available"}
-Make: ${item.make}
+Make: ${item.brand || "Not available"}
 Model: ${item.model}
 Engine: ${item.engine || "Not available"}
 Transmission: ${item.transmission || "Not available"}
