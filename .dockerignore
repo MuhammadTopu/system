@@ -12,6 +12,7 @@ coverage
 .DS_Store
 *.md
 uploads
+src/uploads
 .dockerignore
 Dockerfile
 docker-compose*.yml

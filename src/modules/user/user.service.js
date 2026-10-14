@@ -13,6 +13,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 import pkg from "jsonwebtoken";
 import UserRepository from "../../common/repository/user.repository.js";
+import {
+  findPremiumSubscription,
+  buildSubscriptionSummary,
+} from "../../common/helper/subscription.helper.js";
 import FileService from "../../common/services/file.service.js";
 import firebaseService from "../firebase/firebase.service.js";
 
@@ -818,14 +822,8 @@ export class UserService {
         };
       }
 
-      let isPremium = false;
-
-      const subscription =
-        await this.userRepository.findSubscriptionByUserId(userId);
-
-      if (subscription) {
-        isPremium = true;
-      }
+      const premiumSubscription = await findPremiumSubscription(userId);
+      const isPremium = premiumSubscription !== null;
 
       const imageUrl = user.avatar
         ? `${process.env.BASE_URL}/uploads/${user.avatar}`
@@ -840,6 +838,7 @@ export class UserService {
             ...user,
             imageUrl,
             isPremium,
+            subscription: buildSubscriptionSummary(premiumSubscription),
           },
         },
       };

@@ -149,14 +149,5 @@ async findUserProfileById(userId) {
   return user_data;
 }
 
-// check subs
-async findSubscriptionByUserId(userId) {
-  const subscription = await prisma.subscription.findFirst({
-    where: {
-      user_id: userId,
-    },
-  });
-  return subscription;
-}
 }
 export default UserRepository;

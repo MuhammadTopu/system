@@ -23,8 +23,10 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/src ./src
+COPY --from=builder /app/public ./public
 
-RUN mkdir -p uploads
+# The app saves and serves uploads from src/uploads (see Multer.config.js)
+RUN mkdir -p src/uploads
 
 EXPOSE 8787
 

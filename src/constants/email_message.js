@@ -813,7 +813,7 @@ export const generateSubscriptionHtml = (subscriptions) => {
               <td class="date-cell">${sub.start_date ? new Date(sub.start_date).toLocaleDateString() : 'N/A'}</td>
               <td class="date-cell">${sub.end_date ? new Date(sub.end_date).toLocaleDateString() : 'N/A'}</td>
               <td class="status-${sub.status.toLowerCase()}">${sub.status}</td>
-              <td class="date-cell">${sub.PaymentTransaction?.[0]?.created_at ? new Date(sub.PaymentTransaction[0].created_at).toLocaleDateString() : new Date(sub.created_at).toLocaleDateString()}</td>
+              <td class="date-cell">${sub.SubscriptionEvent?.[0]?.event_timestamp ? new Date(sub.SubscriptionEvent[0].event_timestamp).toLocaleDateString() : new Date(sub.created_at).toLocaleDateString()}</td>
             </tr>
           `).join('')}
         </tbody>

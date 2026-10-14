@@ -25,7 +25,7 @@ export class PlansService {
     this.userRepository = new UserRepository();
   }
     async createService(payload) {
-    const { name, description, price, features, plan } = payload;
+    const { name, description, price, features, plan, rc_product_id } = payload;
 
     if (!name || !description || !price || !features || !plan) {
       return {
@@ -58,6 +58,7 @@ export class PlansService {
       price: parseFloat(price),
       features: parsedFeatures,
       plan,
+      ...(rc_product_id && { rc_product_id }),
     });
 
     return {

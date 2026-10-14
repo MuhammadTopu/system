@@ -35,9 +35,15 @@ export class SubscriptionService {
 
     const validOrder = ["asc", "desc"];
 
-    const validStatusFilters = ["Active", "Ended"];
+    const validStatusFilters = [
+      "Active",
+      "Cancelled",
+      "BillingIssue",
+      "Paused",
+      "Ended",
+    ];
 
-    const validPlanFilters = ["HalfYearly", "Yearly", "NONE"];
+    const validPlanFilters = ["Monthly", "Yearly", "Lifetime"];
 
     const sortByField = validSortByFields.includes(sortBy)
       ? sortBy
@@ -76,9 +82,11 @@ export class SubscriptionService {
       user_id: sub.user.id,
       user_email: sub.user.email,
       plan: sub.plan,
-      payment_method: sub.PaymentTransaction?.[0]?.payment_method || null,
-      payment_transaction_id: sub.PaymentTransaction?.[0]?.id || null,
+      payment_method: sub.store || null,
+      payment_transaction_id: sub.rc_original_transaction_id || null,
       status: sub.status,
+      expires_at: sub.end_date,
+      will_renew: sub.will_renew,
       created_at: sub.created_at,
     }));
 

@@ -10,6 +10,7 @@ import sharp from "sharp";
 import Tesseract from "tesseract.js";
 import { itemSchema } from "../validations/joi.validations.js";
 import firebaseService from "../firebase/firebase.service.js";
+import { isUserPremium } from "../../common/helper/subscription.helper.js";
 dotenv.config();
 
 const prisma = new PrismaClient();
@@ -477,13 +478,13 @@ export const addItem = async (req, res) => {
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { is_subscribed: true, role: true, fcm_token: true},
+      select: { fcm_token: true },
     });
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    const { is_subscribed, role } = user;
+    const isPremium = await isUserPremium(userId);
 
     const newItem = await prisma.item.create({
       data: {
@@ -508,7 +509,7 @@ export const addItem = async (req, res) => {
 
     let generatedData;
 
-    if (is_subscribed === true && role === "premium") {
+    if (isPremium) {
       // pass the created item, not req.body, so normalized values are used
       generatedData = await generateItemData(newItem);
   } else {

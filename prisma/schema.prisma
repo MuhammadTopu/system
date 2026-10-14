@@ -49,7 +49,6 @@ model User {
   email                 String    @unique
   name                  String?
   password              String?
-  customer_id           String?
   country               String?
   address               String?
   gender                String?
@@ -63,7 +62,6 @@ model User {
   state                 String?
   postal_code           String?
   bio                   String?
-  billing_id            String?
   banking_id            String?
   is_subscribed         Boolean?  @default(false)
   is_two_factor_enabled Int?      @default(0)
@@ -74,29 +72,33 @@ model User {
   Item         Item[]
   Tasks        Tasks[]
 
-  Notification_sender   Notification[]       @relation("sender")
-  Notification_receiver Notification[]       @relation("receiver")
-  UserPaymentMethod     UserPaymentMethod[]
-  PaymentTransaction    PaymentTransaction[]
+  Notification_sender   Notification[]      @relation("sender")
+  Notification_receiver Notification[]      @relation("receiver")
+  SubscriptionEvent     SubscriptionEvent[]
   Mail                  Mail[]
 
   @@map("users")
 }
 
 enum Plan {
-  HalfYearly
+  Monthly
   Yearly
-  Free
+  Lifetime // one-time purchase, never expires
 }
 
 enum SubStat {
   Active
+  Cancelled // auto-renew off, still entitled until end_date
+  BillingIssue // payment failed, entitled until grace_period_end
+  Paused
   Ended
 }
 
+// Current state of a store subscription, kept in sync by RevenueCat webhooks.
 model Subscription {
   id         String   @id @default(cuid())
   created_at DateTime @default(now())
+  updated_at DateTime @default(now()) @updatedAt
 
   service_id String?
   service    Services? @relation(fields: [service_id], references: [id])
@@ -108,58 +110,51 @@ model Subscription {
 
   plan       Plan
   start_date DateTime
-  end_date   DateTime
+  end_date   DateTime // end of the current paid period
   status     SubStat  @default(Active)
 
-  PaymentTransaction PaymentTransaction[]
+  rc_original_transaction_id String?   @unique // stable id across renewals
+  product_id                 String? // e.g. maintenance_genie_premium:mg-monthly
+  store                      String? // PLAY_STORE | APP_STORE | ...
+  environment                String? // PRODUCTION | SANDBOX
+  will_renew                 Boolean   @default(true)
+  cancelled_at               DateTime?
+  grace_period_end           DateTime? // set while status = BillingIssue
+  last_event_at              DateTime? // used to ignore out-of-order webhooks
 
+  SubscriptionEvent SubscriptionEvent[]
+
+  @@index([user_id])
+  @@index([status, end_date])
   @@map("subscriptions")
 }
 
-model UserPaymentMethod {
-  id         String    @id @default(cuid())
-  created_at DateTime  @default(now())
-  updated_at DateTime  @default(now())
-  deleted_at DateTime?
+// Append-only log of RevenueCat webhook events. rc_event_id is unique, which
+// makes webhook processing idempotent.
+model SubscriptionEvent {
+  id         String   @id @default(cuid())
+  created_at DateTime @default(now())
 
-  user_id String?
-  user    User?   @relation(fields: [user_id], references: [id])
+  rc_event_id String @unique
+  type        String
 
-  payment_method_id String?
-  checkout_id       String?
-
-  @@map("user_payment_methods")
-}
-
-model PaymentTransaction {
-  id         String    @id @default(cuid())
-  created_at DateTime  @default(now())
-  updated_at DateTime  @updatedAt
-  deleted_at DateTime?
-  status     String    @default("pending") // "pending" | "requires_action" | "succeeded" | "failed" | "canceled"
-
-  // --- Relations ---
   user_id String?
   user    User?   @relation(fields: [user_id], references: [id])
 
   subscription_id String?
   subscription    Subscription? @relation(fields: [subscription_id], references: [id])
 
-  // --- Stripe / Provider identifiers (🔒 make processing idempotent & auditable) ---
-  provider                   String?
-  provider_payment_intent_id String? @unique
-  provider_charge_id         String?
-  provider_customer_id       String?
-  provider_payment_method_id String?
+  product_id      String?
+  store           String?
+  environment     String?
+  price           Float? // price in USD as reported by RevenueCat
+  currency        String?
+  event_timestamp DateTime?
+  payload         Json
 
-  // --- Financials ---
-  price          Decimal? // your major-unit price at time of purchase (e.g., 9.99)
-  currency       String? // e.g., "usd"
-  paid_amount    Decimal? // actual captured amount in major units (e.g., 9.99)
-  paid_currency  String? // e.g., "usd"
-  payment_method String? // duplicate of pm id for convenience/audit
-
-  @@map("payment_transactions")
+  @@index([user_id])
+  @@index([type, event_timestamp])
+  @@map("subscription_events")
 }
 
 model NotificationEvent {
@@ -216,24 +211,24 @@ model Item {
   user    User    @relation(fields: [user_id], references: [id])
   task_id String?
 
-  name              String
-  brand             String?
-  model             String?
-  purchase_date     DateTime?
-  total_mileage     Float?
-  average_mileage_per_year   Float?
-  engine            String?
-  current_mileage   Float?
-  transmission      String?
-  drivetrain       String?
-  current_date       DateTime?
-  year_of_the_model String?
-  image_url         String?
-  category          Category? @default(Custom)
-  user_notes       String?
-  service_intervals String[]
-  forum_suggestions Json?
-  Tasks Tasks[]
+  name                     String
+  brand                    String?
+  model                    String?
+  purchase_date            DateTime?
+  total_mileage            Float?
+  average_mileage_per_year Float?
+  engine                   String?
+  current_mileage          Float?
+  transmission             String?
+  drivetrain               String?
+  current_date             DateTime?
+  year_of_the_model        String?
+  image_url                String?
+  category                 Category? @default(Custom)
+  user_notes               String?
+  service_intervals        String[]
+  forum_suggestions        Json?
+  Tasks                    Tasks[]
 
   Questions Questions[]
 }
@@ -262,28 +257,29 @@ model Tasks {
   user_id String
   user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
-  upcoming_task              String?
-  item_name                  String
-  description                String?
-  category                   String?
-  recommended_interval       String?
-  last_service_assumption    String?
-  next_due_mileage           String?
-  next_due_date              String?
-  priority                   Task_Priority?
-  manufacturer_interval_uncertain Boolean @default(true)
-  item_last_service_date     DateTime?
-  receipt_url                String?
-  status                     Task_Status @default(DueNow)
-  last_date                  DateTime?
-  maintenance_history        String[]
-  shop_suggestions           Json?
+  upcoming_task                   String?
+  item_name                       String
+  description                     String?
+  category                        String?
+  recommended_interval            String?
+  last_service_assumption         String?
+  next_due_mileage                String?
+  next_due_date                   String?
+  priority                        Task_Priority?
+  manufacturer_interval_uncertain Boolean        @default(true)
+  item_last_service_date          DateTime?
+  receipt_url                     String?
+  status                          Task_Status    @default(DueNow)
+  last_date                       DateTime?
+  maintenance_history             String[]
+  shop_suggestions                Json?
 
   @@unique([item_id, upcoming_task])
   @@index([item_id])
   @@index([user_id])
   @@map("tasks")
 }
+
 enum Mail_Status {
   Solved
   Pending
@@ -307,14 +303,15 @@ model Mail {
 }
 
 model Services {
-  id           String         @id @default(cuid())
-  created_at   DateTime       @default(now())
-  name         String
-  description  String?
-  price        Float
-  features     String[]
-  plan         Plan
-  Subscription Subscription[]
+  id            String         @id @default(cuid())
+  created_at    DateTime       @default(now())
+  name          String
+  description   String?
+  price         Float
+  features      String[]
+  plan          Plan
+  rc_product_id String?        @unique // RevenueCat product id, e.g. maintenance_genie_premium:mg-monthly
+  Subscription  Subscription[]
 
   @@map("services")
 }
@@ -340,7 +337,6 @@ model General_Settings {
 //   @@map("questions")
 // }
 
-
 enum OptionType {
   Yes
   No
@@ -358,8 +354,8 @@ model Questions {
   created_at      DateTime         @default(now())
   itemId          String
   item            Item             @relation(fields: [itemId], references: [id])
-  maintenanceItem String           // e.g. "Water Pump"
-  itemKey         String           // e.g. "water_pump"
+  maintenanceItem String // e.g. "Water Pump"
+  itemKey         String // e.g. "water_pump"
   category        String
   priority        PriorityLevel
   question        String
@@ -376,7 +372,7 @@ model Recommendation {
   questionId String
   question   Questions  @relation(fields: [questionId], references: [id], onDelete: Cascade)
   option     OptionType // Yes / No / Planned
-  status     String     // "Complete" / "Recommended" / "Planned" etc.
+  status     String // "Complete" / "Recommended" / "Planned" etc.
   message    String
 
   @@unique([questionId, option])

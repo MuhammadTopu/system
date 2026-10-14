@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import bcrypt from 'bcryptjs';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -70,9 +70,8 @@ async function wipeAppData() {
   await deleteQuestionsRows();
   await prisma.item.deleteMany();
   await prisma.mail.deleteMany();
-  await prisma.paymentTransaction.deleteMany();
+  await prisma.subscriptionEvent.deleteMany();
   await prisma.subscription.deleteMany();
-  await prisma.userPaymentMethod.deleteMany();
   await prisma.user.deleteMany();
   await prisma.services.deleteMany();
   await prisma.general_Settings.deleteMany();
@@ -108,13 +107,14 @@ async function main() {
     },
   });
 
-  const serviceHalf = await prisma.services.create({
+  const serviceMonthly = await prisma.services.create({
     data: {
-      name: 'Premium — 6 months',
-      description: 'Semi-annual maintenance tracking and reminders',
-      price: 49.99,
+      name: 'Premium — monthly',
+      description: 'Monthly plan, billed through Google Play',
+      price: 5.0,
       features: ['Unlimited items', 'Email reminders', 'OCR receipts'],
-      plan: 'HalfYearly',
+      plan: 'Monthly',
+      rc_product_id: 'maintenance_genie_premium:mg-monthly',
     },
   });
 
@@ -122,9 +122,10 @@ async function main() {
     data: {
       name: 'Premium — yearly',
       description: 'Annual plan with best value',
-      price: 89.99,
+      price: 50.0,
       features: ['Unlimited items', 'Priority support', 'OCR receipts'],
       plan: 'Yearly',
+      rc_product_id: 'maintenance_genie_premium:mg-annual',
     },
   });
 
@@ -174,12 +175,10 @@ async function main() {
   });
 
   const now = new Date();
-  const inSixMonths = new Date(now);
-  inSixMonths.setMonth(inSixMonths.getMonth() + 6);
   const inOneYear = new Date(now);
   inOneYear.setFullYear(inOneYear.getFullYear() + 1);
 
-  console.info('Seeding: subscriptions & payments…');
+  console.info('Seeding: subscriptions & events…');
   const subPremium = await prisma.subscription.create({
     data: {
       user_id: premiumUser.id,
@@ -190,42 +189,28 @@ async function main() {
       start_date: now,
       end_date: inOneYear,
       status: 'Active',
+      rc_original_transaction_id: `GPA.seed-${premiumUser.id.slice(0, 8)}`,
+      product_id: serviceYear.rc_product_id,
+      store: 'PLAY_STORE',
+      environment: 'SANDBOX',
+      will_renew: true,
+      last_event_at: now,
     },
   });
 
-  await prisma.subscription.create({
+  await prisma.subscriptionEvent.create({
     data: {
-      user_id: user.id,
-      username: user.name,
-      service_id: serviceHalf.id,
-      price: serviceHalf.price,
-      plan: 'HalfYearly',
-      start_date: now,
-      end_date: inSixMonths,
-      status: 'Active',
-    },
-  });
-
-  await prisma.userPaymentMethod.create({
-    data: {
-      user_id: premiumUser.id,
-      payment_method_id: 'pm_seed_demo',
-      checkout_id: 'cs_seed_demo',
-    },
-  });
-
-  await prisma.paymentTransaction.create({
-    data: {
+      rc_event_id: `seed-event-${premiumUser.id.slice(0, 8)}`,
+      type: 'INITIAL_PURCHASE',
       user_id: premiumUser.id,
       subscription_id: subPremium.id,
-      status: 'succeeded',
-      provider: 'stripe',
-      provider_payment_intent_id: `pi_seed_${premiumUser.id.slice(0, 8)}`,
-      price: new Prisma.Decimal(String(serviceYear.price)),
-      currency: 'usd',
-      paid_amount: new Prisma.Decimal(String(serviceYear.price)),
-      paid_currency: 'usd',
-      payment_method: 'pm_seed_demo',
+      product_id: serviceYear.rc_product_id,
+      store: 'PLAY_STORE',
+      environment: 'SANDBOX',
+      price: serviceYear.price,
+      currency: 'USD',
+      event_timestamp: now,
+      payload: { seeded: true },
     },
   });
 

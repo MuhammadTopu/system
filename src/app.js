@@ -5,12 +5,10 @@ import { fileURLToPath } from "url";
 import path from "path";
 import routes from "./routes/index.js";
 import nodeCron from "node-cron";
-import pkgPrisma from "@prisma/client";
 import { initFirebase } from "./modules/firebase/firebase.service.js";
-const { PrismaClient } = pkgPrisma;
+import { expireOverdueSubscriptions } from "./modules/revenuecat/subscription.sweep.js";
 
 const app = express();
-const prisma = new PrismaClient();
 initFirebase();
 app.use(
   cors({
@@ -25,92 +23,32 @@ app.use(
       "https://maintenance-genie-bay.vercel.app",
       "https://cleint-sys1.vercel.app/",
     ],
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
     credentials: true,
   }),
 );
-//cron job to update subscriptions daily
-// Refresh the counter every day at midnight
-let counter = 0;
+// Daily safety net: expire subscriptions whose webhook never arrived.
 nodeCron.schedule("0 0 * * *", async () => {
   try {
-    const now = new Date();
-    console.log(
-      `Daily cron job running at: ${now.toISOString()} - Counter: ${counter++}`,
-    );
-    const batchSize = 1000;
-    const subscriptionsToUpdate = await prisma.subscription.findMany({
-      where: {
-        end_date: {
-          lte: now,
-        },
-        status: "Active",
-      },
-      take: batchSize,
-      include: {
-        user: {
-          select: {
-            id: true,
-          },
-        },
-      },
-    });
-    if (subscriptionsToUpdate.length === 0) {
-      console.log("No subscriptions to update today.");
-      return;
-    }
-    const userIds = [
-      ...new Set(subscriptionsToUpdate.map((sub) => sub.user.id)),
-    ];
-    await prisma.$transaction([
-      prisma.subscription.updateMany({
-        where: {
-          id: {
-            in: subscriptionsToUpdate.map((sub) => sub.id),
-          },
-        },
-        data: {
-          status: "Ended",
-        },
-      }),
-      prisma.user.updateMany({
-        where: {
-          id: {
-            in: userIds,
-          },
-        },
-        data: {
-          is_subscribed: false,
-          role: "normal",
-        },
-      }),
-    ]);
-    console.log(
-      `Updated ${subscriptionsToUpdate.length} subscriptions and ${userIds.length} users.`,
-    );
+    const expired = await expireOverdueSubscriptions();
+    console.log(`Subscription sweep finished: ${expired} expired.`);
   } catch (error) {
-    console.error("Error in daily subscription cleanup:", error);
+    console.error("Error in daily subscription sweep:", error);
   }
 });
-app.use((req, res, next) => {
-  if (req.originalUrl === "/api/payments/webhook") {
-    express.raw({ type: "application/json" })(req, res, next);
-  } else {
-    express.json()(req, res, next);
-  }
-});
+app.use(express.json());
 
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan("dev"));
 app.use("/api", routes);
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+  res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.use((req, res, next) => {
   res.status(404).json({

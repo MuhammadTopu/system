@@ -1,6 +1,28 @@
 import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
+// RevenueCat events that carry money. Revenue is summed from these rather than
+// from subscriptions, because a renewal updates the subscription in place.
+const REVENUE_EVENT_TYPES = [
+  "INITIAL_PURCHASE",
+  "RENEWAL",
+  "NON_RENEWING_PURCHASE",
+];
+
+const sumRevenue = (startDate, endDate) =>
+  prisma.subscriptionEvent.aggregate({
+    _sum: {
+      price: true,
+    },
+    where: {
+      type: { in: REVENUE_EVENT_TYPES },
+      event_timestamp: {
+        gte: startDate,
+        lte: endDate,
+      },
+    },
+  });
+
 class AdminRepository {
   // for log in
 
@@ -39,31 +61,11 @@ class AdminRepository {
   }
 
   async getMonthlyRevenue(startDate, endDate) {
-    return prisma.subscription.aggregate({
-      _sum: {
-        price: true,
-      },
-      where: {
-        created_at: {
-          gte: startDate,
-          lte: endDate,
-        },
-      },
-    });
+    return sumRevenue(startDate, endDate);
   }
 
   async getRevenueBetweenDates(startDate, endDate) {
-    return prisma.subscription.aggregate({
-      _sum: {
-        price: true,
-      },
-      where: {
-        created_at: {
-          gte: startDate,
-          lte: endDate,
-        },
-      },
-    });
+    return sumRevenue(startDate, endDate);
   }
 
   async countActiveSubscriptions({ userId, startDate, endDate }) {
@@ -196,13 +198,6 @@ async getAllUsers({ page = 1, limit = 10 }) {
             name: true,
           },
         },
-        PaymentTransaction: {
-          select: {
-            id: true,
-            payment_method: true,
-            status: true,
-          },
-        },
       },
       orderBy: {
         [sortByField]: orderBy,
@@ -214,14 +209,16 @@ async getAllUsers({ page = 1, limit = 10 }) {
       select: {
         plan: true,
         status: true,
+        price: true,
+        start_date: true,
+        end_date: true,
         created_at: true,
-        PaymentTransaction: {
+        SubscriptionEvent: {
+          where: { type: { in: REVENUE_EVENT_TYPES } },
+          orderBy: { event_timestamp: "desc" },
+          take: 1,
           select: {
-            id: true,
-            payment_method: true,
-            status: true,
-            price: true,
-            created_at: true,
+            event_timestamp: true,
           },
         },
         user: {
