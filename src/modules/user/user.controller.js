@@ -27,6 +27,7 @@ export const registerUserStep1 = async (req, res, next) => {
 
     return res.status(result.statusCode).json({
       message: result.message,
+      otp: result.otp,
       ...(result.shouldResendOtp !== undefined && {
         shouldResendOtp: result.shouldResendOtp,
       }),
