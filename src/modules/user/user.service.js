@@ -13,6 +13,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import pkg from "jsonwebtoken";
 import UserRepository from "../../common/repository/user.repository.js";
+import { syncFcmToken } from "../../common/helper/fcmToken.helper.js";
 import {
   findPremiumSubscription,
   buildSubscriptionSummary,
@@ -79,7 +80,10 @@ export class UserService {
           },
         });
 
-        await sendRegistrationOTPEmail(email, otp);
+        // Do not make the request wait for the mail server; a failed email is only logged.
+        sendRegistrationOTPEmail(email, otp).catch((error) =>
+          console.error("sendRegistrationOTPEmail failed:", error),
+        );
 
         return {
           statusCode: 200,
@@ -105,7 +109,10 @@ export class UserService {
       },
     });
 
-    await sendRegistrationOTPEmail(email, otp);
+    // Do not make the request wait for the mail server; a failed email is only logged.
+    sendRegistrationOTPEmail(email, otp).catch((error) =>
+      console.error("sendRegistrationOTPEmail failed:", error),
+    );
 
     console.log("OTP sent to email:", email, "OTP:", otp);
 
@@ -328,9 +335,15 @@ export class UserService {
       { expiresIn: "100d" },
     );
 
-    // Save/refresh the device's push token if one was passed in
-    if (fcm_token && fcm_token !== user.fcm_token) {
-      await this.userRepository.updateFcmToken(user.id, fcm_token);
+    // Save/refresh the device's push token if one was passed in. Redis remembers
+    // the last saved token per user, so the database is only written when it changed.
+    if (fcm_token) {
+      await syncFcmToken({
+        userId: user.id,
+        fcmToken: fcm_token,
+        dbToken: user.fcm_token,
+        updateDb: (id, token) => this.userRepository.updateFcmToken(id, token),
+      });
       user.fcm_token = fcm_token;
     }
 
@@ -364,6 +377,167 @@ export class UserService {
           updatedAt: user.updatedAt,
         },
         token,
+      },
+    };
+  }
+
+  // Login with Google or Apple through Firebase Auth. The app signs the user in
+  // with Firebase and sends the Firebase ID token; it is verified here, so the
+  // client cannot claim to be someone else.
+  async socialLogin({ token, fcm_token, name }) {
+    let decoded;
+    try {
+      decoded = await firebaseService.verifyIdToken(token);
+    } catch (error) {
+      if (error.code === "firebase/not-configured") {
+        return {
+          statusCode: 503,
+          data: { message: "Social login is not available right now" },
+        };
+      }
+      return {
+        statusCode: 401,
+        data: { message: "Invalid Firebase token" },
+      };
+    }
+
+    const provider = decoded.firebase?.sign_in_provider;
+    if (!["google.com", "apple.com"].includes(provider)) {
+      return {
+        statusCode: 400,
+        data: { message: "Unsupported sign-in provider" },
+      };
+    }
+
+    const { uid, email, email_verified } = decoded;
+    const appleId =
+      provider === "apple.com"
+        ? (decoded.firebase?.identities?.["apple.com"]?.[0] ?? null)
+        : null;
+
+    // 1. the Firebase uid is the strongest match
+    let user = await prisma.user.findUnique({ where: { firebase_id: uid } });
+    let foundByEmail = false;
+
+    // 2. otherwise link to an existing account, but only when the provider
+    //    has verified that email address
+    if (!user && email && email_verified) {
+      user = await prisma.user.findUnique({ where: { email } });
+      foundByEmail = !!user;
+    }
+
+    if (user) {
+      if (user.status === "suspended") {
+        return {
+          statusCode: 403,
+          data: {
+            message: "Your account is suspended. Please contact support.",
+          },
+        };
+      }
+      if (user.type === "ADMIN") {
+        return {
+          statusCode: 403,
+          data: { message: "ADMIN YOU MUST LOG IN FROM ADMIN PANEL" },
+        };
+      }
+      // the email belongs to an account already linked to another Firebase user
+      if (foundByEmail && user.firebase_id && user.firebase_id !== uid) {
+        return {
+          statusCode: 409,
+          data: {
+            message: "This email is already linked to a different sign-in",
+          },
+        };
+      }
+    }
+
+    let newUser = false;
+
+    try {
+      if (user) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            firebase_id: uid,
+            provider,
+            ...(appleId && !user.apple_id ? { apple_id: appleId } : {}),
+            // Apple sends the name only on the very first authorization
+            ...(!user.name && (decoded.name || name)
+              ? { name: decoded.name || name }
+              : {}),
+          },
+        });
+      } else {
+        if (!email) {
+          return {
+            statusCode: 400,
+            data: { message: "No email available from provider" },
+          };
+        }
+
+        user = await prisma.user.create({
+          data: {
+            email,
+            name: decoded.name || name || null,
+            firebase_id: uid,
+            provider,
+            apple_id: appleId,
+          },
+        });
+        newUser = true;
+      }
+    } catch (error) {
+      if (error.code !== "P2002") throw error;
+
+      // Two sign-ins for the same new user arrived at the same moment: the other
+      // request created the account, so continue as a normal login.
+      const raced = await prisma.user.findUnique({ where: { firebase_id: uid } });
+      if (!raced) {
+        // the email or Apple id belongs to a different account
+        return {
+          statusCode: 409,
+          data: { message: "This account is already registered" },
+        };
+      }
+      user = raced;
+      newUser = false;
+    }
+
+    if (fcm_token) {
+      await syncFcmToken({
+        userId: user.id,
+        fcmToken: fcm_token,
+        dbToken: user.fcm_token,
+        updateDb: (id, deviceToken) =>
+          this.userRepository.updateFcmToken(id, deviceToken),
+      });
+    }
+
+    const accessToken = jwt.sign(
+      {
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        type: user.type,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "100d" },
+    );
+
+    return {
+      statusCode: 200,
+      data: {
+        success: true,
+        message: "Login successful",
+        newUser,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          provider: user.provider,
+        },
+        token: accessToken,
       },
     };
   }
@@ -404,7 +578,10 @@ export class UserService {
           expires_at: new Date(Date.now() + 15 * 60 * 1000),
         });
 
-        await sendForgotPasswordOTP(email, otp);
+        // Do not make the request wait for the mail server; a failed email is only logged.
+        sendForgotPasswordOTP(email, otp).catch((error) =>
+          console.error("sendForgotPasswordOTP failed:", error),
+        );
 
         return {
           statusCode: 200,
@@ -432,7 +609,10 @@ export class UserService {
       expires_at: new Date(Date.now() + 15 * 60 * 1000),
     });
 
-    await sendForgotPasswordOTP(email, otp);
+    // Do not make the request wait for the mail server; a failed email is only logged.
+    sendForgotPasswordOTP(email, otp).catch((error) =>
+      console.error("sendForgotPasswordOTP failed:", error),
+    );
 
     return {
       statusCode: 200,

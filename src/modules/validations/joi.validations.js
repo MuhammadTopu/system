@@ -36,6 +36,12 @@ export const login = Joi.object({
     fcm_token: Joi.string().optional(),
 });
 
+export const social_login = Joi.object({
+    token: Joi.string().required(),
+    fcm_token: Joi.string().optional(),
+    name: Joi.string().allow("").optional(),
+});
+
 export const forgot_password_otp_send = Joi.object({
     email: Joi.string().email().required(),
 });

@@ -70,6 +70,7 @@ async function wipeAppData() {
   await deleteQuestionsRows();
   await prisma.item.deleteMany();
   await prisma.mail.deleteMany();
+  await prisma.paymentTransaction.deleteMany();
   await prisma.subscriptionEvent.deleteMany();
   await prisma.subscription.deleteMany();
   await prisma.user.deleteMany();
@@ -195,6 +196,36 @@ async function main() {
       environment: 'SANDBOX',
       will_renew: true,
       last_event_at: now,
+    },
+  });
+
+  await prisma.user.update({
+    where: { id: premiumUser.id },
+    data: {
+      subscribed_at: now,
+      subscription_valid_until: inOneYear,
+      subscription_status: 'active',
+    },
+  });
+
+  await prisma.paymentTransaction.create({
+    data: {
+      user_id: premiumUser.id,
+      subscription_id: subPremium.id,
+      provider: 'revenuecat',
+      store: 'PLAY_STORE',
+      environment: 'SANDBOX',
+      order_id: `seed-event-${premiumUser.id.slice(0, 8)}`,
+      reference_number: subPremium.rc_original_transaction_id,
+      product_id: serviceYear.rc_product_id,
+      type: 'order',
+      status: 'completed',
+      raw_status: 'INITIAL_PURCHASE',
+      amount: serviceYear.price,
+      currency: 'USD',
+      paid_amount: serviceYear.price,
+      paid_currency: 'USD',
+      purchased_at: now,
     },
   });
 

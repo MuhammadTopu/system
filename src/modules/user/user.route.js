@@ -4,6 +4,7 @@ import {
   verifyOTP,
   registerUserStep3,
   loginUser,
+  socialLogin,
   forgotPasswordOTPsend,
   resetPassword,
   verifyForgotPasswordOTP,
@@ -36,6 +37,8 @@ router.post('/verify-otp', verifyOTP);
 router.post('/register-step3', registerUserStep3);
 //log iin a user
 router.post('/login', loginUser);
+//Login with Google / Apple (Firebase ID token)
+router.post('/social-login', socialLogin);
 //forget pass
 router.post('/forget_pass', forgotPasswordOTPsend);
 router.post('/checkForgetPassOtp', verifyForgotPasswordOTP);

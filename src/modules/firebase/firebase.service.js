@@ -1,7 +1,9 @@
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getMessaging } from "firebase-admin/messaging";
+import { getAuth } from "firebase-admin/auth";
 import pkgPrisma from "@prisma/client";
 import { getFirebaseCredentials } from "./firebase.config.js";
+import { deleteCachedFcmTokens } from "../../utils/redisClient.js";
 
 const { PrismaClient } = pkgPrisma;
 const prisma = new PrismaClient();
@@ -38,10 +40,19 @@ const INVALID_TOKENS = [
 ];
 
 async function clearToken(token) {
+  const owners = await prisma.user.findMany({
+    where: { fcm_token: token },
+    select: { id: true },
+  });
+
   await prisma.user.updateMany({
     where: { fcm_token: token },
     data: { fcm_token: null },
   });
+
+  // Forget the cached token too, otherwise the next login with this token would
+  // be treated as "unchanged" and it would never be saved again.
+  await deleteCachedFcmTokens(owners.map((owner) => owner.id));
 }
 
 async function pushToDevice(token, data) {
@@ -124,6 +135,19 @@ async function pushToDevice(token, data) {
 // ── Service ──────────────────────────────────────────────────────────────────
 
 export class FirebaseService {
+  /**
+   * Verifies a Firebase ID token (Google / Apple sign-in) and returns the decoded
+   * token. The check also confirms the token has not been revoked.
+   */
+  async verifyIdToken(idToken) {
+    if (!getApps().length) {
+      const error = new Error("Firebase is not configured");
+      error.code = "firebase/not-configured";
+      throw error;
+    }
+    return getAuth().verifyIdToken(idToken, true);
+  }
+
   /** Send push to a user by ID (looks up their stored fcm_token). */
   async send(userId, data) {
     const user = await prisma.user.findUnique({

@@ -106,11 +106,32 @@ async updatePasswordById({ userId, password }) {
   });
 }
 
+// An FCM token identifies one physical device, so only one account may hold it.
+// Saves the token for this user and takes it away from every other account
+// (for example the previous user of a shared phone). Returns the ids of the
+// accounts that lost it, so their cached copy can be dropped.
 async updateFcmToken(userId, fcm_token) {
-  return prisma.user.update({
-    where: { id: userId },
-    data: { fcm_token },
+  const others = await prisma.user.findMany({
+    where: { fcm_token, id: { not: userId } },
+    select: { id: true },
   });
+
+  await prisma.$transaction([
+    prisma.user.updateMany({
+      where: { fcm_token, id: { not: userId } },
+      data: { fcm_token: null },
+    }),
+    // only writes this user's row when the token actually differs
+    prisma.user.updateMany({
+      where: {
+        id: userId,
+        OR: [{ fcm_token: null }, { fcm_token: { not: fcm_token } }],
+      },
+      data: { fcm_token },
+    }),
+  ]);
+
+  return others.map((user) => user.id);
 }
 
 
@@ -139,6 +160,10 @@ async findUserProfileById(userId) {
       email: true,
       avatar: true,
       address: true,
+      provider: true,
+      subscribed_at: true,
+      subscription_valid_until: true,
+      subscription_status: true,
     },
   });
 

@@ -15,6 +15,16 @@ const ACTIVATING_EVENTS = [
   "SUBSCRIPTION_EXTENDED",
 ];
 
+// Which events become a payment_transactions row. PRODUCT_CHANGE moves no money
+// (the new price is charged at the next renewal), so it is not listed.
+const TRANSACTION_KINDS = {
+  INITIAL_PURCHASE: { type: "order", status: "completed" },
+  NON_RENEWING_PURCHASE: { type: "order", status: "completed" },
+  RENEWAL: { type: "renewal", status: "completed" },
+  BILLING_ISSUE: { type: "renewal", status: "failed" },
+  CANCELLATION: {}, // only a refund (cancel_reason CUSTOMER_SUPPORT) is recorded
+};
+
 // Events with nothing to store: no user, no subscription.
 const SKIPPED_EVENTS = ["TEST"];
 
@@ -38,16 +48,6 @@ const planFromProductId = (productId) => {
 };
 
 export class RevenueCatService {
-  // Sandbox purchases (Play license testers, RevenueCat Test Store) must not
-  // grant premium in production unless explicitly allowed.
-  acceptsEnvironment(environment) {
-    if (environment !== "SANDBOX") return true;
-    return (
-      process.env.NODE_ENV !== "production" ||
-      process.env.REVENUECAT_ACCEPT_SANDBOX === "true"
-    );
-  }
-
   async processEvent(payload) {
     const event = payload?.event;
 
@@ -57,10 +57,6 @@ export class RevenueCatService {
 
     if (SKIPPED_EVENTS.includes(event.type)) {
       return { status: "ignored", reason: event.type };
-    }
-
-    if (!this.acceptsEnvironment(event.environment)) {
-      return { status: "ignored", reason: "sandbox event in production" };
     }
 
     try {
@@ -126,10 +122,23 @@ export class RevenueCatService {
         grace_period_end: null,
       });
     } else if (event.type === "CANCELLATION") {
-      subscription = await this.applyState(tx, user, event, "Cancelled", {
-        will_renew: false,
-        cancelled_at: new Date(),
-      });
+      // A refund (cancel_reason CUSTOMER_SUPPORT) revokes access at once; any
+      // other cancellation only turns auto-renew off and keeps the paid period.
+      const refunded = event.cancel_reason === "CUSTOMER_SUPPORT";
+      subscription = await this.applyState(
+        tx,
+        user,
+        event,
+        refunded ? "Ended" : "Cancelled",
+        refunded
+          ? {
+              will_renew: false,
+              cancelled_at: new Date(),
+              end_date: new Date(),
+              grace_period_end: null,
+            }
+          : { will_renew: false, cancelled_at: new Date() },
+      );
     } else if (event.type === "BILLING_ISSUE") {
       subscription = await this.applyState(tx, user, event, "BillingIssue", {
         grace_period_end: toDate(event.grace_period_expiration_at_ms),
@@ -154,9 +163,59 @@ export class RevenueCatService {
       });
     }
 
+    await this.recordTransaction(tx, user, event, subscription);
+
     await syncUserPremiumFlags(user.id, tx);
 
     return { status: "processed", type: event.type };
+  }
+
+  // Stores a payment_transactions row for events that move money: a purchase,
+  // a renewal, a failed renewal payment and a refund. order_id is the RevenueCat
+  // event id, so one event can never be recorded twice.
+  async recordTransaction(tx, user, event, subscription) {
+    const kind = TRANSACTION_KINDS[event.type] ?? {};
+    const isRefund =
+      event.type === "CANCELLATION" && event.cancel_reason === "CUSTOMER_SUPPORT";
+
+    const { type, status } = isRefund
+      ? { type: "refund", status: "refunded" }
+      : kind;
+    if (!type) return;
+
+    let subscriptionId = subscription?.id ?? null;
+    if (!subscriptionId && event.original_transaction_id) {
+      const existing = await tx.subscription.findUnique({
+        where: { rc_original_transaction_id: event.original_transaction_id },
+        select: { id: true },
+      });
+      subscriptionId = existing?.id ?? null;
+    }
+
+    const price = event.price ?? null; // RevenueCat reports price in USD
+    const paidAmount = event.price_in_purchased_currency ?? price;
+
+    await tx.paymentTransaction.create({
+      data: {
+        user_id: user.id,
+        subscription_id: subscriptionId,
+        provider: "revenuecat",
+        store: event.store ?? null,
+        environment: event.environment ?? null,
+        order_id: event.id,
+        reference_number: event.original_transaction_id ?? null,
+        transaction_id: event.transaction_id ?? null,
+        product_id: event.new_product_id ?? event.product_id ?? null,
+        type,
+        status,
+        raw_status: event.type,
+        amount: price,
+        currency: price !== null ? "USD" : null,
+        paid_amount: paidAmount,
+        paid_currency: paidAmount !== null ? (event.currency ?? "USD") : null,
+        purchased_at: toDate(event.purchased_at_ms),
+      },
+    });
   }
 
   // Creates or updates the subscription an event refers to. Returns null when

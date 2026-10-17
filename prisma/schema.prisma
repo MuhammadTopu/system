@@ -68,13 +68,24 @@ model User {
   two_factor_secret     String? // secret key for two factor authentication
   fcm_token             String? // Firebase Cloud Messaging device token for push notifications
 
+  // Cached summary of the user's subscription, kept in sync by the RevenueCat webhook
+  subscribed_at            DateTime? // when the user first subscribed
+  subscription_valid_until DateTime? // end of the access period (2099 for lifetime)
+  subscription_status      UserSubscriptionStatus? // null = never subscribed
+
+  // Social sign-in (Firebase Auth)
+  firebase_id String? @unique // Firebase uid
+  apple_id    String? @unique // Apple user id (Sign in with Apple)
+  provider    String? // 'google.com' | 'apple.com'; null for email + password
+
   Subscription Subscription[]
   Item         Item[]
   Tasks        Tasks[]
 
-  Notification_sender   Notification[]      @relation("sender")
-  Notification_receiver Notification[]      @relation("receiver")
+  Notification_sender   Notification[]       @relation("sender")
+  Notification_receiver Notification[]       @relation("receiver")
   SubscriptionEvent     SubscriptionEvent[]
+  PaymentTransaction    PaymentTransaction[]
   Mail                  Mail[]
 
   @@map("users")
@@ -92,6 +103,11 @@ enum SubStat {
   BillingIssue // payment failed, entitled until grace_period_end
   Paused
   Ended
+}
+
+enum UserSubscriptionStatus {
+  active
+  expired
 }
 
 // Current state of a store subscription, kept in sync by RevenueCat webhooks.
@@ -122,11 +138,50 @@ model Subscription {
   grace_period_end           DateTime? // set while status = BillingIssue
   last_event_at              DateTime? // used to ignore out-of-order webhooks
 
-  SubscriptionEvent SubscriptionEvent[]
+  SubscriptionEvent  SubscriptionEvent[]
+  PaymentTransaction PaymentTransaction[]
 
   @@index([user_id])
   @@index([status, end_date])
   @@map("subscriptions")
+}
+
+// One row per money movement reported by RevenueCat: a purchase, a renewal,
+// a failed renewal payment or a refund.
+model PaymentTransaction {
+  id         String   @id @default(cuid())
+  created_at DateTime @default(now())
+  updated_at DateTime @default(now()) @updatedAt
+
+  user_id String?
+  user    User?   @relation(fields: [user_id], references: [id])
+
+  subscription_id String?
+  subscription    Subscription? @relation(fields: [subscription_id], references: [id])
+
+  provider         String  @default("revenuecat")
+  store            String? // PLAY_STORE | APP_STORE | ...
+  environment      String? // PRODUCTION | SANDBOX
+  order_id         String? @unique // RevenueCat event id, makes writes idempotent
+  reference_number String? // original transaction id of the subscription
+  transaction_id   String? // store transaction id of this payment
+  product_id       String?
+
+  type       String // order | renewal | refund
+  status     String // completed | failed | refunded
+  raw_status String? // the RevenueCat event type
+
+  amount        Decimal? @db.Decimal(12, 2) // price in USD
+  currency      String? // currency of paid_amount
+  paid_amount   Decimal? @db.Decimal(12, 2) // price in the currency the user paid in
+  paid_currency String?
+
+  purchased_at DateTime?
+
+  @@index([user_id])
+  @@index([subscription_id])
+  @@index([status, created_at])
+  @@map("payment_transactions")
 }
 
 // Append-only log of RevenueCat webhook events. rc_event_id is unique, which

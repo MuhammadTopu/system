@@ -57,23 +57,60 @@ export const buildSubscriptionSummary = (sub) => {
   };
 };
 
-// Keeps the cached users.is_subscribed / users.role columns in line with the
-// subscription table. Admin queries still read these columns. Admins keep
-// their role: only regular users are switched between normal and premium.
+// Keeps the cached columns on the users table in line with the subscriptions:
+// is_subscribed, role, subscription_status (active | expired | null = never
+// subscribed), subscription_valid_until and subscribed_at (first subscription).
+// Admin queries read these columns. Admins keep their role: only regular users
+// are switched between normal and premium.
 export const syncUserPremiumFlags = async (userId, client = prisma) => {
-  const premium = await isUserPremium(userId, client);
+  const premiumSub = await findPremiumSubscription(userId, client);
+  const premium = premiumSub !== null;
 
   const user = await client.user.findUnique({
     where: { id: userId },
-    select: { type: true, role: true, is_subscribed: true },
+    select: {
+      type: true,
+      role: true,
+      is_subscribed: true,
+      subscribed_at: true,
+      subscription_valid_until: true,
+      subscription_status: true,
+    },
   });
   if (!user) return premium;
+
+  const span = await client.subscription.aggregate({
+    where: { user_id: userId },
+    _min: { start_date: true },
+    _max: { end_date: true, grace_period_end: true },
+  });
+  const hasSubscriptions = span._min.start_date !== null;
+
+  let validUntil = null;
+  if (premiumSub) {
+    validUntil = getAccessEnd(premiumSub);
+  } else if (hasSubscriptions) {
+    validUntil = getAccessEnd({
+      end_date: span._max.end_date,
+      grace_period_end: span._max.grace_period_end,
+    });
+  }
+
+  const status = premium ? "active" : hasSubscriptions ? "expired" : null;
+  const sameDate = (a, b) => (a ? a.getTime() : null) === (b ? b.getTime() : null);
 
   const data = {};
   if (user.is_subscribed !== premium) data.is_subscribed = premium;
   if (user.type === "USER") {
     const role = premium ? "premium" : "normal";
     if (user.role !== role) data.role = role;
+  }
+  if (user.subscription_status !== status) data.subscription_status = status;
+  if (!sameDate(user.subscription_valid_until, validUntil)) {
+    data.subscription_valid_until = validUntil;
+  }
+  if (!user.subscribed_at && span._min.start_date) {
+    data.subscribed_at = span._min.start_date;
   }
 
   if (Object.keys(data).length) {
