@@ -40,6 +40,13 @@ nodeCron.schedule("0 0 * * *", async () => {
 app.use(express.json());
 
 app.use(express.urlencoded({ extended: true }));
+// A request without a body (or without a parsable content type) leaves req.body
+// undefined, which crashed the controllers. Treat it as an empty body so the
+// validation answers with a clean 400.
+app.use((req, res, next) => {
+  if (req.body === undefined) req.body = {};
+  next();
+});
 app.use(morgan("dev"));
 app.use("/api", routes);
 app.get("/", (req, res) => {
@@ -57,6 +64,16 @@ app.use((req, res, next) => {
 });
 
 app.use((err, req, res, next) => {
+  // Errors caused by the client (malformed JSON, body too large, ...) are 4xx
+  if (err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({
+      message:
+        err.type === "entity.parse.failed"
+          ? "Invalid JSON in request body"
+          : err.message,
+    });
+  }
+
   res.status(500).json({
     message: `500 Something broken!`,
     error: err.message,
