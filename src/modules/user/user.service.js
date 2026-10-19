@@ -30,6 +30,17 @@ const { isEmail } = validator;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// One answer for "no such email", "wrong password" and "account without a
+// password", so the response never reveals whether an email is registered.
+const invalidCredentials = () => ({
+  statusCode: 401,
+  data: { message: "Email or password does not match" },
+});
+
+// Compared against when no password can be checked, so a wrong email takes as
+// long to answer as a wrong password.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync("not-a-real-password", 10);
+
 export class UserService {
   constructor() {
     this.userRepository = new UserRepository();
@@ -286,15 +297,19 @@ export class UserService {
 
     const user = await this.userRepository.findLoginUser(email);
 
-    if (!user) {
-      return {
-        statusCode: 404,
-        data: {
-          message: "User not found",
-        },
-      };
+    // No such account, or one without a password (signed up with Google/Apple)
+    if (!user || !user.password) {
+      await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+      return invalidCredentials();
     }
 
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordValid) {
+      return invalidCredentials();
+    }
+
+    // Account state is only revealed to someone who knows the password
     if (user.status === "suspended") {
       return {
         statusCode: 403,
@@ -309,17 +324,6 @@ export class UserService {
         statusCode: 403,
         data: {
           message: "ADMIN YOU MUST LOG IN FROM ADMIN PANEL",
-        },
-      };
-    }
-
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-
-    if (!isPasswordValid) {
-      return {
-        statusCode: 401,
-        data: {
-          message: "Invalid password",
         },
       };
     }
