@@ -7,6 +7,7 @@ import routes from "./routes/index.js";
 import nodeCron from "node-cron";
 import { initFirebase } from "./modules/firebase/firebase.service.js";
 import { expireOverdueSubscriptions } from "./modules/revenuecat/subscription.sweep.js";
+import { startTaskReminderCron } from "./modules/notification/task.reminders.js";
 
 const app = express();
 initFirebase();
@@ -37,6 +38,8 @@ nodeCron.schedule("0 0 * * *", async () => {
     console.error("Error in daily subscription sweep:", error);
   }
 });
+// Three times a day: one digest notification per user for overdue / due-soon tasks.
+startTaskReminderCron(nodeCron);
 app.use(express.json());
 
 app.use(express.urlencoded({ extended: true }));

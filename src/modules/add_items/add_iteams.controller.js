@@ -17,7 +17,8 @@ import {
   normalizeQuestions,
   validateAnswer,
 } from "./category.prompts.js";
-import firebaseService from "../firebase/firebase.service.js";
+import { notifyUser, NOTIFICATION_TYPES } from "../notification/notification.service.js";
+import { toDueAt } from "./task.due.js";
 import { isUserPremium } from "../../common/helper/subscription.helper.js";
 dotenv.config();
 
@@ -478,7 +479,7 @@ export const addItem = async (req, res) => {
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { fcm_token: true },
+      select: { id: true },
     });
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -520,13 +521,13 @@ export const addItem = async (req, res) => {
 
       const created = await prisma.item.create({ data });
 
-      if (user.fcm_token) {
-        await firebaseService.send(user.id, {
-          title: "Add Item Success",
-          body: "You have successfully added an item.",
-          type: "notification",
-        });
-      }
+      notifyUser(userId, {
+        title: "Item added",
+        body: `${created.name} was added successfully.`,
+        type: NOTIFICATION_TYPES.ITEM_ADDED,
+        entityId: created.id,
+        data: { itemId: created.id },
+      });
 
       return res.status(201).json({
         success: true,
@@ -659,13 +660,13 @@ FORMAT RULES:
         },
       });
 
-      if (user.fcm_token) {
-        await firebaseService.send(user.id, {
-          title: "Add Item Success",
-          body: "You have successfully added an item.",
-          type: "notification",
-        });
-      }
+      notifyUser(userId, {
+        title: "Item added",
+        body: `${updatedItem.name} was added successfully.`,
+        type: NOTIFICATION_TYPES.ITEM_ADDED,
+        entityId: updatedItem.id,
+        data: { itemId: updatedItem.id },
+      });
 
       return res.status(201).json({
         success: true,
@@ -2066,6 +2067,13 @@ How to use these answers:
             last_service_assumption: m.last_service_assumption || null,
             next_due_mileage: m.next_due_mileage || null,
             next_due_date: m.next_due_date || null,
+            // real timestamp for the reminder cron; a lone Other task (a one-time
+            // task) falls back to the due date the user entered
+            due_at:
+              toDueAt(m.next_due_date) ??
+              (item.category === "Custom" && maintenanceItems.length === 1
+                ? item.due_date
+                : null),
             priority: mapPriority(m.priority),
             manufacturer_interval_uncertain:
               m.manufacturer_interval_uncertain !== false,
@@ -2074,6 +2082,16 @@ How to use these answers:
         }),
       ),
     );
+
+    if (created.length > 0) {
+      notifyUser(userId, {
+        title: "Your tasks are ready",
+        body: `${created.length} maintenance task${created.length === 1 ? "" : "s"} created for ${item.name}.`,
+        type: NOTIFICATION_TYPES.TASKS_CREATED,
+        entityId: id,
+        data: { itemId: id, count: created.length },
+      });
+    }
 
     return res.json({ success: true, tasks: created });
   } catch (error) {

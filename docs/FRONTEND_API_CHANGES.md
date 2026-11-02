@@ -18,6 +18,12 @@ All errors are JSON with a `message` field.
 | Items | `GET /items/:id/questions` | Premium only. Home and Other use a new question format |
 | Items | `POST /items/:id/submit-answers` | Premium only. Home and Other use a new answer format |
 | Items | `POST /items/:id/generate-tasks` | Premium only. Works for Home and Other too |
+| Notifications | (push, see section 7) | New notifications for login, item added, tasks created, task reminders and premium changes |
+| Notifications | `GET /notifications` | **New.** The user's notification list (paged, with unread count) |
+| Notifications | `PATCH /notifications/:id/read` | **New.** Mark one notification as read |
+| Notifications | `DELETE /notifications/:id` | **New.** Soft delete one notification |
+| Admin | `POST /admin/notifications/send` | **New.** Send a custom system message |
+| Admin | `POST /admin/notifications/run-task-reminders` | **New.** Run the task reminder job now |
 
 Not changed: `get-all-completed-tasks`, `all-tasks`, `:id/tasks`, `upload-maintenance-history/:id`, `toggle-task-status/:id`, `delete-task/:id`, `delete-item/:id`.
 
@@ -348,10 +354,133 @@ No request body. Response: `{ "success": true, "tasks": [ … ] }`.
 
 ## 6. Other behavior changes
 
-- Adding an item now sends **one** push notification ("Add Item Success"). The delayed "task generated" push is removed.
+- The old delayed "task generated" push and the "Still there?" login follow-up push are removed. See section 7 for the new notifications.
 - A free user can still add items of any category. Only the question, answer and task endpoints are premium.
 
-## 7. Error quick reference
+## 7. Push notifications
+
+The server sends push notifications through Firebase to the device token saved at login (`fcm_token`). Every push has a `title`, a `body` and a data payload:
+
+| Data key | Meaning |
+|---|---|
+| `type` | What the notification is about (table below). Use it to decide where a tap goes |
+| `entityId` | The related record id (a task id, an item id), when there is one |
+| `data` | A **JSON string** with extra ids, for example `{"taskId":"…","itemId":"…"}`. Parse it before use |
+
+All Android notifications use the channel id `high_importance_channel`. Create that channel in the app, otherwise Android may drop the notification. Each notification now has its own tag, so a new one no longer replaces the previous one in the tray.
+
+| `type` | When | `entityId` |
+|---|---|---|
+| `login` | After a successful login | |
+| `welcome` | First social sign-in (new account) | |
+| `item_added` | An item was added | item id |
+| `tasks_created` | `generate-tasks` created tasks | item id |
+| `task_reminder` | Daily digest of overdue or due-within-24-hours tasks (see below) | task id (only when the digest is about one task) |
+| `premium_activated` | First purchase (subscription or lifetime) | |
+| `premium_renewed` | Subscription renewed | |
+| `premium_cancelled` | Auto-renew turned off (access continues until the period ends) | |
+| `premium_payment_issue` | Renewal payment failed | |
+| `premium_expired` | Premium ended | |
+| `premium_refunded` | Purchase refunded | |
+| `system` | A custom message sent by an admin | |
+
+After a purchase or renewal, call `POST /users/refresh-token` to get the new `role`.
+
+**Task reminders** run **three times a day** (08:00, 13:00 and 18:00 UTC by default). Each run sends a user **at most one notification**, summarizing all of their tasks that are overdue or due within the next 24 hours, for example: "You have 3 tasks that need attention (1 overdue, 2 due within 24 hours). Next up: Oil change, Tire rotation."
+- With one task, `entityId` is that task's id and `data` has `taskId`, `itemId` and `count`. With several tasks, `data` has only `count` (open the tasks list).
+- A task is reminded **once**. It is not repeated in later runs.
+- The reminder uses the task's `next_due_date`. A date without a time (for example `2026-12-01`) counts as due at 09:00 UTC that day. Tasks with no real date (for example "Unknown") and tasks marked `Complete` get no reminder.
+
+### 7.1 In-app notification list (user token required)
+
+Every notification the server sends is also saved, so the app can show a notification screen. These three endpoints only ever touch the logged-in user's own notifications. Another user's notification returns 404.
+
+**`GET /notifications`**: the user's notifications, newest first. Deleted ones are not returned.
+
+Query parameters (all optional): `page` (default 1), `limit` (default 20, max 100), `unread=true` (only unread).
+
+Response (200):
+```json
+{
+  "success": true,
+  "message": "Notifications retrieved successfully",
+  "notifications": [
+    {
+      "id": "…",
+      "type": "task_reminder",
+      "title": "Maintenance reminder",
+      "body": "You have 3 tasks that need attention (1 overdue, 2 due within 24 hours). Next up: Oil change, Tire rotation.",
+      "entity_id": null,
+      "data": { "count": 3 },
+      "is_read": false,
+      "read_at": null,
+      "created_at": "2026-11-04T08:00:00.000Z"
+    }
+  ],
+  "unreadCount": 4,
+  "page": 1,
+  "limit": 20,
+  "total": 12,
+  "totalPages": 1
+}
+```
+- `type` is one of the values in the table above. `entity_id` and `data` tell the app where to go when the notification is tapped (the same values as in the push).
+- `data` is a real JSON object here (in the push itself it is a JSON string).
+- `unreadCount` is the total number of unread notifications, regardless of the `unread` filter and the page. Use it for the badge.
+- `total` and `totalPages` follow the current filter.
+
+**`PATCH /notifications/:id/read`**: marks one notification as read. No body. It only sets `read_at` (the first time). Calling it again changes nothing and still returns 200.
+
+Response (200):
+```json
+{ "success": true, "message": "Notification marked as read", "notification": { "id": "…", "is_read": true, "read_at": "2026-11-04T09:12:00.000Z", "…": "…" } }
+```
+- 404 `"Notification not found"`: it doesn't exist, belongs to someone else, or was deleted.
+
+**`DELETE /notifications/:id`**: removes a notification from the user's list. It is a **soft delete**: the server keeps the record and only hides it, so it no longer appears in `GET /notifications` and does not count in `unreadCount`.
+
+Response (200): `{ "success": true, "message": "Notification deleted" }`
+- 404 `"Notification not found"`: it doesn't exist, belongs to someone else, or is already deleted.
+
+Both PATCH and DELETE return 401 for a missing or invalid token. There is no "mark all as read" endpoint yet. To do that in the app, call PATCH for each unread notification.
+
+### 7.2 Task reminder cron (what it does, and the admin trigger)
+
+**Schedule:** three times a day, at 08:00, 13:00 and 18:00 UTC. The server settings `TASK_REMINDER_CRON` and `TASK_REMINDER_TZ` change the times and time zone.
+
+**What happens on each run:**
+1. It finds tasks that are overdue or due within the next 24 hours, that are not `Complete`, that have never been reminded, and whose owner is an active user.
+2. It marks them as reminded, so no run ever includes a task twice.
+3. It groups the tasks by user and sends each user **one** notification (type `task_reminder`), and saves it to the user's notification list.
+4. Users with nothing to be reminded about get nothing.
+
+**Admin trigger:** an admin can run the same job at any time with `POST /admin/notifications/run-task-reminders` (see below). It uses exactly the same rules. Because tasks already reminded are skipped, triggering it twice in a row does nothing the second time. It can't be used to resend reminders.
+
+### 7.3 Admin panel: notifications (ADMIN token required)
+
+**`POST /admin/notifications/send`**: send a custom system message.
+```json
+{ "title": "Scheduled maintenance", "body": "The app will be down tonight at 2 AM.", "audience": "all" }
+```
+- `title`: required, max 100 characters. `body`: required, max 500.
+- `audience`: `all` (default), `premium`, `free` or `user`. With `user`, `user_id` is required. With any other audience, `user_id` is not allowed.
+- Only active, non-deleted users are included.
+- Response (200): `{ "success": true, "message": "Notification sent", "audience": "all", "matched": 120, "pushed": 97, "failed": 2, "noToken": 21 }`
+  - `matched`: users who got the message. `pushed`: delivered to a device. `failed`: push attempted but failed. `noToken`: users with no device token (they still get a history row, but no push).
+- 404 if no users match. 400 on validation errors.
+
+**`POST /admin/notifications/run-task-reminders`**: run the reminder job now (it also runs automatically three times a day). No body. Tasks already reminded are not sent again.
+```
+POST /api/admin/notifications/run-task-reminders
+Authorization: Bearer <admin access token>
+```
+- Response (200): `{ "success": true, "message": "Task reminders processed", "users": 3, "tasks": 7 }` (`users`: notifications sent, one per user; `tasks`: tasks included). `0` and `0` means nothing needed a reminder.
+- The request waits until the job finishes. With a very large number of due tasks it can take a while, so allow a longer timeout in the admin panel.
+- A non-admin token returns 403. A missing or invalid token returns 401.
+
+---
+
+## 8. Error quick reference
 
 | Status | Meaning |
 |---|---|

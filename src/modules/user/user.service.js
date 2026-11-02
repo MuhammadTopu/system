@@ -25,8 +25,8 @@ import {
 } from "../../common/helper/subscription.helper.js";
 import FileService from "../../common/services/file.service.js";
 import firebaseService from "../firebase/firebase.service.js";
+import { notifyUser, NOTIFICATION_TYPES } from "../notification/notification.service.js";
 
-const FIVE_SECONDS = 5 * 1000;
 
 const prisma = new PrismaClient();
 const { sign, verify } = pkg;
@@ -348,22 +348,13 @@ export class UserService {
       user.fcm_token = fcm_token;
     }
 
-    // send notification using FirebaseService if user has fcm_token
-    if (user.fcm_token) {
-      await firebaseService.send(user.id, {
-        title: "Login Successful",
-        body: "You have successfully logged in.",
-        type: "notification",
-      });
-
-      setTimeout(() => {
-        firebaseService.send(user.id, {
-          title: "Still there?",
-          body: "This is your 5-second follow-up notification.",
-          type: "notification",
-        });
-      }, FIVE_SECONDS);
-    }
+    notifyUser(user.id, {
+      title: "Login successful",
+      body: user.name
+        ? `Welcome back, ${user.name}!`
+        : "You have successfully logged in.",
+      type: NOTIFICATION_TYPES.LOGIN,
+    });
 
     return {
       statusCode: 200,
@@ -520,6 +511,16 @@ export class UserService {
 
     const accessToken = signAccessToken(user);
     const refreshToken = signRefreshToken(user);
+
+    notifyUser(user.id, {
+      title: newUser ? "Welcome to Maintenance Genie" : "Login successful",
+      body: newUser
+        ? "Your account is ready. Add your first item to get started."
+        : user.name
+          ? `Welcome back, ${user.name}!`
+          : "You have successfully logged in.",
+      type: newUser ? NOTIFICATION_TYPES.WELCOME : NOTIFICATION_TYPES.LOGIN,
+    });
 
     return {
       statusCode: 200,

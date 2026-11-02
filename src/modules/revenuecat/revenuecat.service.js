@@ -3,6 +3,7 @@ import {
   ENTITLED_STATUSES,
   syncUserPremiumFlags,
 } from "../../common/helper/subscription.helper.js";
+import { notifyUser, NOTIFICATION_TYPES } from "../notification/notification.service.js";
 
 const prisma = new PrismaClient();
 
@@ -63,9 +64,14 @@ export class RevenueCatService {
       // The event row and the state change share one transaction: if applying
       // the event fails, the row is rolled back too and RevenueCat's retry is
       // processed again instead of being mistaken for a duplicate.
-      return await prisma.$transaction((tx) => this.handleEvent(tx, event), {
+      const result = await prisma.$transaction((tx) => this.handleEvent(tx, event), {
         timeout: 15000,
       });
+
+      // After the commit, so a rolled back event never sends a notification.
+      if (result?.status === "processed") this.notifyPurchaseEvent(event);
+
+      return result;
     } catch (error) {
       if (
         error.code === "P2002" &&
@@ -75,6 +81,61 @@ export class RevenueCatService {
       }
       throw error;
     }
+  }
+
+  // Tells the user about a subscription change. Fire and forget: it never throws.
+  notifyPurchaseEvent(event) {
+    const userId = isRealUserId(event.app_user_id) ? event.app_user_id : null;
+    if (!userId) return;
+
+    const refunded =
+      event.type === "CANCELLATION" && event.cancel_reason === "CUSTOMER_SUPPORT";
+    const lifetime =
+      event.type === "NON_RENEWING_PURCHASE" ||
+      planFromProductId(event.new_product_id ?? event.product_id) === "Lifetime";
+
+    let message = null;
+    if (event.type === "INITIAL_PURCHASE" || event.type === "NON_RENEWING_PURCHASE") {
+      message = {
+        type: NOTIFICATION_TYPES.PREMIUM_ACTIVATED,
+        title: "Welcome to Premium",
+        body: lifetime
+          ? "Your lifetime Premium is active. Enjoy every feature."
+          : "Your Premium subscription is active. Enjoy every feature.",
+      };
+    } else if (event.type === "RENEWAL") {
+      message = {
+        type: NOTIFICATION_TYPES.PREMIUM_RENEWED,
+        title: "Premium renewed",
+        body: "Your Premium subscription was renewed. Thank you!",
+      };
+    } else if (refunded) {
+      message = {
+        type: NOTIFICATION_TYPES.PREMIUM_REFUNDED,
+        title: "Premium refunded",
+        body: "Your purchase was refunded and Premium access has ended.",
+      };
+    } else if (event.type === "CANCELLATION") {
+      message = {
+        type: NOTIFICATION_TYPES.PREMIUM_CANCELLED,
+        title: "Premium auto-renew is off",
+        body: "You keep Premium until the end of your paid period.",
+      };
+    } else if (event.type === "BILLING_ISSUE") {
+      message = {
+        type: NOTIFICATION_TYPES.PREMIUM_PAYMENT_ISSUE,
+        title: "Payment problem",
+        body: "We could not renew your Premium. Please update your payment method.",
+      };
+    } else if (event.type === "EXPIRATION") {
+      message = {
+        type: NOTIFICATION_TYPES.PREMIUM_EXPIRED,
+        title: "Premium expired",
+        body: "Your Premium has ended. Renew to get your Premium features back.",
+      };
+    }
+
+    if (message) notifyUser(userId, message);
   }
 
   async handleEvent(tx, event) {

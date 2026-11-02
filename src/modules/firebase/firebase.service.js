@@ -82,7 +82,9 @@ async function pushToDevice(token, data) {
         notification: {
           sound: "default",
           channelId: "high_importance_channel",
-          tag: `msg_${data.conversationId || "general"}`,
+          // Same tag = the new notification replaces the old one in the tray, so
+          // give every notification its own (or the caller's) tag.
+          tag: data.tag || `${data.type || "n"}_${Date.now()}`,
         },
       },
       apns: {

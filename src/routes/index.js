@@ -5,6 +5,7 @@ import adminRoutes from "../modules/admin/routes/index.js";
 import itemRoutes from "../modules/add_items/add_items.route.js";
 import revenueCatRoutes from "../modules/revenuecat/revenuecat.route.js";
 import firebaseRoutes from "../modules/firebase/firebase.route.js";
+import notificationRoutes from "../modules/notification/notification.route.js";
 
 const router = express.Router();
 
@@ -13,5 +14,6 @@ router.use("/admin", adminRoutes);
 router.use("/items", itemRoutes);
 router.use("/revenuecat", revenueCatRoutes);
 router.use("/firebase", firebaseRoutes);
+router.use("/notifications", notificationRoutes);
 
 export default router;

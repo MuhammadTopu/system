@@ -138,6 +138,17 @@ export const social_login = Joi.object({
     name: Joi.string().allow("").optional(),
 });
 
+export const admin_send_notification = Joi.object({
+    title: Joi.string().trim().min(1).max(100).required(),
+    body: Joi.string().trim().min(1).max(500).required(),
+    audience: Joi.string().valid("all", "premium", "free", "user").default("all"),
+    user_id: Joi.string().trim().when("audience", {
+        is: "user",
+        then: Joi.required(),
+        otherwise: Joi.forbidden(),
+    }),
+});
+
 export const refresh_token = Joi.object({
     refreshToken: Joi.string().required(),
 });

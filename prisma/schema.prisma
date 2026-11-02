@@ -247,6 +247,10 @@ model Notification {
   entity_id String?
   read_at   DateTime?
 
+  title String?
+  body  String?
+  data  Json?
+
   @@map("notifications")
 }
 
@@ -341,9 +345,15 @@ model Tasks {
   maintenance_history             String[]
   shop_suggestions                Json?
 
+  // When the task is due as a real timestamp (next_due_date is AI text). The
+  // reminder cron reads this; reminded_at keeps it from reminding twice.
+  due_at      DateTime?
+  reminded_at DateTime?
+
   @@unique([item_id, upcoming_task])
   @@index([item_id])
   @@index([user_id])
+  @@index([due_at])
   @@map("tasks")
 }
 
