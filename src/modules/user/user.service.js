@@ -15,6 +15,11 @@ import pkg from "jsonwebtoken";
 import UserRepository from "../../common/repository/user.repository.js";
 import { syncFcmToken } from "../../common/helper/fcmToken.helper.js";
 import {
+  signAccessToken,
+  signRefreshToken,
+  verifyRefreshToken,
+} from "../../common/helper/token.helper.js";
+import {
   findPremiumSubscription,
   buildSubscriptionSummary,
 } from "../../common/helper/subscription.helper.js";
@@ -328,16 +333,8 @@ export class UserService {
       };
     }
 
-    const token = jwt.sign(
-      {
-        userId: user.id,
-        email: user.email,
-        role: user.role,
-        type: user.type,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "100d" },
-    );
+    const token = signAccessToken(user);
+    const refreshToken = signRefreshToken(user);
 
     // Save/refresh the device's push token if one was passed in. Redis remembers
     // the last saved token per user, so the database is only written when it changed.
@@ -377,10 +374,13 @@ export class UserService {
           id: user.id,
           name: user.name,
           email: user.email,
+          type: user.type,
+          role: user.role,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         },
         token,
+        refreshToken,
       },
     };
   }
@@ -518,16 +518,8 @@ export class UserService {
       });
     }
 
-    const accessToken = jwt.sign(
-      {
-        userId: user.id,
-        email: user.email,
-        role: user.role,
-        type: user.type,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "100d" },
-    );
+    const accessToken = signAccessToken(user);
+    const refreshToken = signRefreshToken(user);
 
     return {
       statusCode: 200,
@@ -540,8 +532,49 @@ export class UserService {
           name: user.name,
           email: user.email,
           provider: user.provider,
+          type: user.type,
+          role: user.role,
         },
         token: accessToken,
+        refreshToken,
+      },
+    };
+  }
+
+  // Swap a valid refresh token for a new access token (and a new refresh token).
+  // The role is read from the database, so a plan change shows up on refresh.
+  async refreshAccessToken(refreshToken) {
+    const invalid = {
+      statusCode: 401,
+      data: { message: "Invalid or expired refresh token" },
+    };
+
+    let decoded;
+    try {
+      decoded = verifyRefreshToken(refreshToken);
+    } catch {
+      return invalid;
+    }
+
+    const user = await prisma.user.findFirst({
+      where: { id: decoded.userId, type: "USER", status: "active", deleted_at: null },
+    });
+    if (!user) return invalid;
+
+    return {
+      statusCode: 200,
+      data: {
+        success: true,
+        message: "Token refreshed",
+        token: signAccessToken(user),
+        refreshToken: signRefreshToken(user),
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          type: user.type,
+          role: user.role,
+        },
       },
     };
   }

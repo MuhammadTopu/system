@@ -8,7 +8,15 @@ import pkg from "jsonwebtoken";
 import axios from "axios";
 import sharp from "sharp";
 import Tesseract from "tesseract.js";
-import { itemSchema } from "../validations/joi.validations.js";
+import { validateItemBody } from "../validations/joi.validations.js";
+import { toItemSummary, toItemDetail } from "./item.dto.js";
+import {
+  MAX_QUESTION_ROUNDS,
+  buildQuestionPrompt,
+  buildTaskPrompt,
+  normalizeQuestions,
+  validateAnswer,
+} from "./category.prompts.js";
 import firebaseService from "../firebase/firebase.service.js";
 import { isUserPremium } from "../../common/helper/subscription.helper.js";
 dotenv.config();
@@ -18,7 +26,6 @@ const { sign, verify } = pkg;
 const { isEmail } = validator;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const FIVE_SECONDS = 5000;
 
 const parseJsonResponse = (raw) => {
   let text = String(raw || "").trim();
@@ -29,6 +36,34 @@ const parseJsonResponse = (raw) => {
       .trim();
   }
   return JSON.parse(text);
+};
+
+// Same signature as axios.post. Tries the primary OpenAI key first and, if that
+// request fails, retries once with the fallback key.
+const openAiPost = async (url, body, config = {}) => {
+  const keys = [
+    ...new Set(
+      [process.env.CHAT_GPT_API_KEY, process.env.CHAT_GPT_FALL_BACK_API_KEY].filter(Boolean),
+    ),
+  ];
+  if (keys.length === 0) throw new Error("No OpenAI API key configured");
+
+  let lastError;
+  for (const [i, key] of keys.entries()) {
+    try {
+      return await axios.post(url, body, {
+        ...config,
+        headers: { ...config.headers, Authorization: `Bearer ${key}` },
+      });
+    } catch (err) {
+      lastError = err;
+      console.error(
+        `OpenAI request failed with ${i === 0 ? "primary" : "fallback"} key:`,
+        err.response?.data || err.message,
+      );
+    }
+  }
+  throw lastError;
 };
 
 
@@ -137,7 +172,7 @@ FORMAT RULES:
 - No introduction sentence and no closing sentence.
 `.trim();
 
-    const serviceIntervalResponse = await axios.post(
+    const serviceIntervalResponse = await openAiPost(
       "https://api.openai.com/v1/chat/completions",
       {
         model: process.env.CHAT_GPT_MODEL_NAME || "gpt-3.5-turbo",
@@ -250,7 +285,7 @@ RETURN THIS EXACT JSON FORMAT
 }
     `.trim();
 
-    const forumSuggestionResponse = await axios.post(
+    const forumSuggestionResponse = await openAiPost(
       "https://api.openai.com/v1/chat/completions",
       {
         model: "gpt-4o",
@@ -291,7 +326,7 @@ RETURN THIS EXACT JSON FORMAT
 
     return { service_intervals, forum_suggestions };
   } catch (error) {
-    console.error("Error generating item data with openAi:", error);
+    console.error("Error generating item data with openAi:", error.response?.data || error.message);
     return null;
   }
 };
@@ -430,10 +465,75 @@ RETURN THIS EXACT JSON FORMAT
 
 export const addItem = async (req, res) => {
   try {
-    const { error, value } = itemSchema.validate(req.body);
+    const { error, value } = validateItemBody(req.body);
 
     if (error) {
-      return res.status(400).json({ message: error.details[0].message });
+      return res.status(400).json({ message: error });
+    }
+
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(400).json({ message: "User ID is required" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { fcm_token: true },
+    });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const imageUrl = req.file
+      ? `${process.env.MEDIA_URL || "http://localhost:8070"}/uploads/${req.file.filename}`
+      : null;
+
+    // Home and Other: saved as-is. Questions, answers and tasks follow (premium).
+    if (value.category !== "Vehicle") {
+      const base = {
+        name: value.name,
+        category: value.category,
+        image_url: req.file ? req.file.filename : null,
+        user_id: userId,
+        current_date: new Date(),
+        user_notes: value.user_notes || null,
+      };
+
+      const data =
+        value.category === "Home"
+          ? {
+              ...base,
+              property_type: value.property_type,
+              year_of_the_model: value.year_of_the_model || null,
+              zip_code: value.zip_code || null,
+              own_or_rent: value.own_or_rent || null,
+              systems: value.systems || [],
+            }
+          : {
+              ...base,
+              group: value.group || null,
+              description: value.description || null,
+              due_date: value.due_date ? new Date(value.due_date) : null,
+              repeat: value.repeat || null,
+              reminder: value.reminder || null,
+            };
+
+      const created = await prisma.item.create({ data });
+
+      if (user.fcm_token) {
+        await firebaseService.send(user.id, {
+          title: "Add Item Success",
+          body: "You have successfully added an item.",
+          type: "notification",
+        });
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: "Item added successfully",
+        item: toItemDetail(created),
+        imageUrl,
+      });
     }
 
     const {
@@ -452,16 +552,6 @@ export const addItem = async (req, res) => {
       user_notes,
     } = value;
 
-    if (
-      category != "Home" &&
-      category != "Vehicle" &&
-      category != "Appliance" &&
-      category != "Electronics" &&
-      category != "Custom"
-    ) {
-      return res.status(400).json({ message: "Invalid category" });
-    }
-
     const formattedPurchaseDate = purchase_date
       ? new Date(purchase_date)
       : null;
@@ -471,48 +561,36 @@ export const addItem = async (req, res) => {
       ? parseFloat(average_mileage_per_year)
       : null;
 
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(400).json({ message: "User ID is required" });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { fcm_token: true },
-    });
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
     const isPremium = await isUserPremium(userId);
 
-    const newItem = await prisma.item.create({
-      data: {
-        name,
-        brand,
-        model,
-        purchase_date: formattedPurchaseDate,
-        total_mileage: mileage,
-        year_of_the_model,
-        category,
-        image_url: req.file ? req.file.filename : null,
-        user_id: userId,
-        engine: engine || null,
-        transmission: transmission || null,
-        drivetrain: drivetrain || null,
-        current_mileage: currentMileage,
-        average_mileage_per_year: avgMileagePerYear,
-        current_date: new Date(),
-        user_notes: user_notes || null,
-      },
-    });
+    // Built first, saved only after AI generation succeeds, so a failed
+    // generation never leaves a half-created item behind.
+    const itemData = {
+      name,
+      brand,
+      model,
+      purchase_date: formattedPurchaseDate,
+      total_mileage: mileage,
+      year_of_the_model,
+      category,
+      image_url: req.file ? req.file.filename : null,
+      user_id: userId,
+      engine: engine || null,
+      transmission: transmission || null,
+      drivetrain: drivetrain || null,
+      current_mileage: currentMileage,
+      average_mileage_per_year: avgMileagePerYear,
+      current_date: new Date(),
+      user_notes: user_notes || null,
+    };
 
-    let generatedData;
+    let generatedData = null;
 
     if (isPremium) {
-      // pass the created item, not req.body, so normalized values are used
-      generatedData = await generateItemData(newItem);
-  } else {
+      // generateItemData returns null on failure
+      generatedData = await generateItemData(itemData);
+    } else {
+      try {
       const serviceIntervalPrompt = `
 Generate a recommended service interval list for the following item.
 
@@ -537,7 +615,7 @@ FORMAT RULES:
 - No introduction sentence and no closing sentence.
 `.trim();
 
-      const serviceIntervalResponse = await axios.post(
+      const serviceIntervalResponse = await openAiPost(
         "https://api.openai.com/v1/chat/completions",
         {
           model: process.env.CHAT_GPT_MODEL_NAME || "gpt-3.5-turbo",
@@ -562,50 +640,51 @@ FORMAT RULES:
           .filter((line) => line.length > 0),
         forum_suggestions: [],
       };
+      } catch (aiError) {
+        console.error(
+          "Error generating service intervals:",
+          aiError.response?.data || aiError.message,
+        );
+        generatedData = null;
+      }
     }
+
     if (generatedData) {
-      const updatedItem = await prisma.item.update({
-        where: { id: newItem.id },
+      const updatedItem = await prisma.item.create({
         data: {
+          ...itemData,
           service_intervals: generatedData.service_intervals,
           // now stored as structured JSON, not a string array
           forum_suggestions: generatedData.forum_suggestions || [],
         },
       });
 
-      const imageUrl = req.file
-        ? `${process.env.MEDIA_URL || "http://localhost:8070"}/uploads/${req.file.filename}`
-        : null;
-
-          if (user.fcm_token) {
-      await firebaseService.send(user.id, {
-        title: "Add Item Success",
-        body: "You have successfully added an item.",
-        type: "notification",
-      });
-
-      setTimeout(() => {
-        firebaseService.send(user.id, {
-          title: "YYour task is generated",
-          body: "Your task has been generated for the item you added. Please check your tasks.",
+      if (user.fcm_token) {
+        await firebaseService.send(user.id, {
+          title: "Add Item Success",
+          body: "You have successfully added an item.",
           type: "notification",
         });
-      }, FIVE_SECONDS);
-    }
+      }
 
       return res.status(201).json({
         success: true,
         message: "Item added successfully with generated data",
-        item: updatedItem,
+        item: toItemDetail(updatedItem),
         imageUrl,
       });
     } else {
+      // nothing was saved; drop the uploaded image too
+      if (req.file) {
+        const filePath = path.join(__dirname, "../../uploads", req.file.filename);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      }
       return res
         .status(500)
         .json({ message: "Failed to generate additional data for item" });
     }
   } catch (error) {
-    console.error("Error adding item:", error);
+    console.error("Error adding item:", error.response?.data || error.message);
 
     if (req.file) {
       const filePath = path.join(__dirname, "../../uploads", req.file.filename);
@@ -870,44 +949,272 @@ FORMAT RULES:
 //   }
 // };
 
+// Every item field the question / task prompts can use.
+const ITEM_CONTEXT_SELECT = {
+  name: true,
+  category: true,
+  brand: true,
+  model: true,
+  year_of_the_model: true,
+  engine: true,
+  transmission: true,
+  drivetrain: true,
+  current_mileage: true,
+  average_mileage_per_year: true,
+  user_notes: true,
+  user_id: true,
+  property_type: true,
+  zip_code: true,
+  own_or_rent: true,
+  systems: true,
+  group: true,
+  description: true,
+  due_date: true,
+  repeat: true,
+  reminder: true,
+};
+
+// Shape of a Home / Other question sent to the app.
+const formatAdaptiveQuestion = (q) => ({
+  id: q.id,
+  question_id: q.itemKey,
+  question_text: q.question,
+  input_type: q.input_type,
+  options: q.options || [],
+  optional: q.optional,
+  reason: q.reason,
+  maintenance_impact: q.maintenance_impact,
+  round: q.round,
+  answer: q.answer,
+  skipped: q.skipped,
+});
+
+// One AI round of follow-up questions for a Home / Other item. Throws if the AI
+// call or its JSON fails; nothing is saved here.
+const askAdaptiveQuestions = async (item, answered, round, existingKeys) => {
+  const response = await openAiPost(
+    "https://api.openai.com/v1/chat/completions",
+    {
+      model: process.env.CHAT_GPT_MODEL_NAME || "gpt-4o",
+      messages: [
+        { role: "user", content: buildQuestionPrompt(item, answered, round) },
+      ],
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+    },
+  );
+
+  const parsed = parseJsonResponse(response.data.choices[0].message.content);
+  const limit = round === 1 ? (item.category === "Home" ? 8 : 6) : 4;
+  const questions = normalizeQuestions(parsed.questions, existingKeys, limit);
+
+  return {
+    needs_more_information: parsed.needs_more_information !== false && questions.length > 0,
+    questions,
+  };
+};
+
+const saveAdaptiveQuestions = async (itemId, category, questions, round) => {
+  await prisma.questions.createMany({
+    data: questions.map((q) => ({
+      itemId,
+      itemKey: q.itemKey,
+      category,
+      question: q.question,
+      reason: q.reason,
+      input_type: q.input_type,
+      options: q.options,
+      optional: q.optional,
+      maintenance_impact: q.maintenance_impact,
+      round,
+    })),
+    skipDuplicates: true,
+  });
+
+  return prisma.questions.findMany({
+    where: { itemId, round },
+    orderBy: { created_at: "asc" },
+  });
+};
+
+const isAnswered = (q) => q.answer !== null || q.skipped;
+
+// Home / Other: round 1 of questions, or whatever already exists.
+const generateAdaptiveQuestionsForItem = async (res, item, id) => {
+  const existing = await prisma.questions.findMany({
+    where: { itemId: id },
+    orderBy: { created_at: "asc" },
+  });
+
+  if (existing.length > 0) {
+    return res.json({
+      success: true,
+      round: Math.max(...existing.map((q) => q.round)),
+      needs_more_information: existing.some((q) => !isAnswered(q)),
+      questions: existing.map(formatAdaptiveQuestion),
+    });
+  }
+
+  const { needs_more_information, questions } = await askAdaptiveQuestions(
+    item,
+    [],
+    1,
+    [],
+  );
+
+  const saved = questions.length
+    ? await saveAdaptiveQuestions(id, item.category, questions, 1)
+    : [];
+
+  return res.json({
+    success: true,
+    round: 1,
+    needs_more_information,
+    questions: saved.map(formatAdaptiveQuestion),
+  });
+};
+
+// Home / Other: validate and store answers, then ask for the next round if needed.
+const submitAdaptiveAnswers = async (res, item, id, answers) => {
+  const questions = await prisma.questions.findMany({
+    where: { itemId: id },
+    orderBy: { created_at: "asc" },
+  });
+
+  if (questions.length === 0) {
+    return res.status(404).json({ message: "No questions found for this item" });
+  }
+
+  const pending = questions.filter((q) => !isAnswered(q));
+  if (pending.length === 0) {
+    return res.json({
+      success: true,
+      message: "All questions have already been answered.",
+      round: Math.max(...questions.map((q) => q.round)),
+      needs_more_information: false,
+      questions: [],
+    });
+  }
+
+  const byRef = new Map();
+  pending.forEach((q) => {
+    byRef.set(q.itemKey, q);
+    byRef.set(q.id, q);
+  });
+
+  const updates = new Map(); // db id -> data
+  for (const a of answers) {
+    const q = byRef.get(a?.question_id);
+    if (!q) {
+      return res.status(400).json({
+        message: `Unknown or already answered question: ${a?.question_id}`,
+      });
+    }
+    if (updates.has(q.id)) {
+      return res.status(400).json({ message: `Duplicate answer for ${q.itemKey}` });
+    }
+
+    if (a.skipped === true) {
+      if (!q.optional) {
+        return res.status(400).json({ message: `${q.itemKey} is required and cannot be skipped` });
+      }
+      updates.set(q.id, { skipped: true });
+      continue;
+    }
+
+    const result = validateAnswer(q, a.answer);
+    if (result.error) return res.status(400).json({ message: result.error });
+    updates.set(q.id, { answer: result.value });
+  }
+
+  const missing = pending.filter((q) => !q.optional && !updates.has(q.id));
+  if (missing.length > 0) {
+    return res.status(400).json({
+      message: `Please answer the required questions: ${missing.map((q) => q.itemKey).join(", ")}`,
+    });
+  }
+
+  // optional questions left out of the submission count as skipped
+  pending.forEach((q) => {
+    if (!updates.has(q.id)) updates.set(q.id, { skipped: true });
+  });
+
+  await prisma.$transaction(
+    [...updates].map(([qid, data]) =>
+      prisma.questions.update({ where: { id: qid }, data }),
+    ),
+  );
+
+  const round = Math.max(...questions.map((q) => q.round));
+  let nextQuestions = [];
+
+  if (round < MAX_QUESTION_ROUNDS) {
+    try {
+      const all = await prisma.questions.findMany({
+        where: { itemId: id },
+        orderBy: { created_at: "asc" },
+      });
+      const result = await askAdaptiveQuestions(
+        item,
+        all.filter(isAnswered),
+        round + 1,
+        all.map((q) => q.itemKey),
+      );
+      if (result.needs_more_information) {
+        nextQuestions = await saveAdaptiveQuestions(
+          id,
+          item.category,
+          result.questions,
+          round + 1,
+        );
+      }
+    } catch (err) {
+      // answers are already saved; the user can still move on to task generation
+      console.error(
+        "Error generating follow-up questions:",
+        err.response?.data || err.message,
+      );
+    }
+  }
+
+  return res.json({
+    success: true,
+    round: nextQuestions.length ? round + 1 : round,
+    needs_more_information: nextQuestions.length > 0,
+    questions: nextQuestions.map(formatAdaptiveQuestion),
+  });
+};
+
 export const generateQuestions = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      return res.status(400).json({ message: "User ID is required" });
+    }
 
     const item = await prisma.item.findUnique({
       where: { id },
-      select: {
-        category: true,
-        brand: true,
-        model: true,
-        year_of_the_model: true,
-        engine: true,
-        transmission: true,
-        drivetrain: true,
-        current_mileage: true,
-        user_id: true,
-      },
+      select: ITEM_CONTEXT_SELECT,
     });
 
     if (!item) return res.status(404).json({ message: "Item not found" });
 
-    const user = await prisma.user.findUnique({
-      where: { id: item.user_id },
-      select: { role: true },
-    });
+    if (item.user_id !== userId) {
+      return res.status(403).json({ message: "You do not have access to this item" });
+    }
 
-    if (!user?.role === 'premium') {
+    if (!(await isUserPremium(userId))) {
       return res.status(403).json({
         success: false,
         premiumRequired: true,
-        message: "Upgrade to Premium to generate vehicle-specific maintenance questions.",
+        message: "Upgrade to Premium to generate maintenance questions.",
       });
     }
 
     if (item.category !== "Vehicle") {
-      return res.status(400).json({
-        message: "Vehicle-specific questions are only available for vehicle items.",
-      });
+      return await generateAdaptiveQuestionsForItem(res, item, id);
     }
 
     const existingQuestions = await prisma.questions.findMany({
@@ -1062,7 +1369,7 @@ RETURN THIS EXACT JSON FORMAT
 }
     `.trim();
 
-    const response = await axios.post(
+    const response = await openAiPost(
       "https://api.openai.com/v1/chat/completions",
       {
         model: process.env.CHAT_GPT_MODEL_NAME || "gpt-4",
@@ -1094,8 +1401,6 @@ RETURN THIS EXACT JSON FORMAT
 
     const questionList = parsed.questions || [];
 
-    // NOTE: this insert will throw at runtime — `userAnswer` is required (OptionType,
-    // not OptionType?) in the current schema, and there is no answer to give it yet.
     const created = await prisma.$transaction(
       questionList.map((q) =>
         prisma.questions.create({
@@ -1107,8 +1412,7 @@ RETURN THIS EXACT JSON FORMAT
             priority: q.priority,
             question: q.question,
             reason: q.reason,
-            // userAnswer intentionally omitted — required field, will error until
-            // schema makes it optional
+            // userAnswer is optional and filled in later by submitAnswers
           },
         }),
       ),
@@ -1116,7 +1420,7 @@ RETURN THIS EXACT JSON FORMAT
 
     return res.json({ success: true, questions: created });
   } catch (error) {
-    console.error("Error generating questions:", error);
+    console.error("Error generating questions:", error.response?.data || error.message);
     return res.status(500).json({ message: "Failed to generate questions" });
   }
 };
@@ -1138,7 +1442,7 @@ export const submitAnswers = async (req, res) => {
     // Confirm the item exists and belongs to this user
     const item = await prisma.item.findUnique({
       where: { id },
-      select: { user_id: true },
+      select: ITEM_CONTEXT_SELECT,
     });
 
     if (!item) {
@@ -1149,18 +1453,16 @@ export const submitAnswers = async (req, res) => {
       return res.status(403).json({ message: "You do not have access to this item" });
     }
 
-    // Confirm the user is premium
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { role: true },
-    });
-
-    if (user?.role !== "premium") {
+    if (!(await isUserPremium(userId))) {
       return res.status(403).json({
         success: false,
         premiumRequired: true,
         message: "Upgrade to Premium to submit answers and receive recommendations.",
       });
+    }
+
+    if (item.category !== "Vehicle") {
+      return await submitAdaptiveAnswers(res, item, id, answers);
     }
 
     // Fetch this item's questions in a stable, predictable order
@@ -1268,7 +1570,7 @@ RETURN THIS EXACT JSON FORMAT
 }
     `.trim();
 
-    const response = await axios.post(
+    const response = await openAiPost(
       "https://api.openai.com/v1/chat/completions",
       {
         model: process.env.CHAT_GPT_MODEL_NAME || "gpt-4",
@@ -1345,7 +1647,7 @@ RETURN THIS EXACT JSON FORMAT
 
     return res.json({ success: true, questions: updatedQuestions });
   } catch (error) {
-    console.error("Error submitting answers:", error);
+    console.error("Error submitting answers:", error.response?.data || error.message);
     return res.status(500).json({ message: "Failed to submit answers" });
   }
 };
@@ -1519,18 +1821,7 @@ export const generateTasks = async (req, res) => {
 
     const item = await prisma.item.findUnique({
       where: { id },
-      select: {
-        name: true,
-        category: true,
-        brand: true,
-        model: true,
-        year_of_the_model: true,
-        engine: true,
-        current_mileage: true,
-        average_mileage_per_year: true,
-        user_notes: true,
-        user_id: true,
-      },
+      select: ITEM_CONTEXT_SELECT,
     });
 
     if (!item) return res.status(404).json({ message: "Item not found" });
@@ -1539,9 +1830,11 @@ export const generateTasks = async (req, res) => {
       return res.status(403).json({ message: "You do not have access to this item" });
     }
 
-    if (item.category !== "Vehicle") {
-      return res.status(400).json({
-        message: "Task generation is only available for vehicle items.",
+    if (!(await isUserPremium(userId))) {
+      return res.status(403).json({
+        success: false,
+        premiumRequired: true,
+        message: "Upgrade to Premium to generate maintenance tasks.",
       });
     }
 
@@ -1556,7 +1849,7 @@ export const generateTasks = async (req, res) => {
 
     const currentDate = new Date().toISOString().split("T")[0];
 
-    const prompt = `
+    const vehiclePrompt = `
 You are Maintenance Genie, a vehicle maintenance schedule generator.
 Your job is to create a standard maintenance schedule based on the provided vehicle
 information.
@@ -1651,7 +1944,49 @@ service manual."
 }
     `.trim();
 
-    const response = await axios.post(
+    // Home / Other schedules are built from the details plus every answer given.
+    let prompt = vehiclePrompt;
+    if (item.category === "Vehicle") {
+      // Vehicle answers (Yes / No / Planned) adjust the schedule.
+      const vehicleAnswers = await prisma.questions.findMany({
+        where: { itemId: id, userAnswer: { not: null } },
+        orderBy: { created_at: "asc" },
+      });
+
+      if (vehicleAnswers.length > 0) {
+        prompt = `${vehiclePrompt}
+
+──────────────────────────────
+OWNER'S MAINTENANCE HISTORY ANSWERS
+──────────────────────────────
+${vehicleAnswers
+  .map(
+    (q) =>
+      `- ${q.maintenanceItem || q.itemKey}: ${q.question} -> ${q.userAnswer}`,
+  )
+  .join("\n")}
+
+How to use these answers:
+- "Yes": the service was already done. Do NOT create a task for it. If it matches a
+  standard task, set last_service_assumption to "Reported done by owner" and push the
+  next due date out accordingly.
+- "No": the service has not been done. Create a task for it and raise its priority
+  (and mark it "Due Now" or "Overdue" when the mileage or age warrants it).
+- "Planned": create the task with status "Upcoming".
+- Items not covered by these answers follow the normal schedule rules above.`;
+      }
+    } else {
+      const answered = await prisma.questions.findMany({
+        where: { itemId: id },
+        orderBy: { created_at: "asc" },
+      });
+      prompt = buildTaskPrompt(
+        item,
+        answered.filter((q) => q.answer !== null || q.skipped),
+      );
+    }
+
+    const response = await openAiPost(
       "https://api.openai.com/v1/chat/completions",
       {
         model: process.env.CHAT_GPT_MODEL_NAME || "gpt-4",
@@ -1681,7 +2016,14 @@ service manual."
       return res.status(500).json({ message: "Invalid JSON response from AI" });
     }
 
-    const maintenanceItems = parsed.maintenance_items || [];
+    // tasks are unique per (item, name); drop repeats the AI may return
+    const seenTasks = new Set();
+    const maintenanceItems = (parsed.maintenance_items || []).filter((m) => {
+      const key = String(m?.task || "").trim().toLowerCase();
+      if (!key || seenTasks.has(key)) return false;
+      seenTasks.add(key);
+      return true;
+    });
 
     // Map GPT's status strings to the Task_Status enum
     const statusMap = {
@@ -1735,7 +2077,7 @@ service manual."
 
     return res.json({ success: true, tasks: created });
   } catch (error) {
-    console.error("Error generating tasks:", error);
+    console.error("Error generating tasks:", error.response?.data || error.message);
     return res.status(500).json({ message: "Failed to generate tasks" });
   }
 };
@@ -1788,7 +2130,7 @@ If a date is not present, use "unknown date".
 If you can't find any services, respond with: { "maintenance_history": [] }
 `;
 
-    const gptResponse = await axios.post(
+    const gptResponse = await openAiPost(
       "https://api.openai.com/v1/chat/completions",
       {
         model: "gpt-4o",
@@ -1860,7 +2202,7 @@ If you can't find any services, respond with: { "maintenance_history": [] }
       receiptUrl: `http://localhost:8070/uploads/${req.file.filename}`,
     });
   } catch (error) {
-    console.error("Error in uploadReceipt:", error);
+    console.error("Error in uploadReceipt:", error.response?.data || error.message);
 
     if (req.file) {
       fs.unlinkSync(path.join(__dirname, "../../uploads", req.file.filename));
@@ -1918,7 +2260,7 @@ export const updateStatusOfTask = async (req, res) => {
       task: updatedTask,
     });
   } catch (error) {
-    console.error("Error updating task status:", error);
+    console.error("Error updating task status:", error.response?.data || error.message);
     return res
       .status(500)
       .json({ message: "Internal server error", error: error.message });
@@ -1942,7 +2284,7 @@ export const getAllcomletedTasksForUser = async (req, res) => {
       tasks,
     });
   } catch (error) {
-    console.error("Error retrieving completed tasks:", error);
+    console.error("Error retrieving completed tasks:", error.response?.data || error.message);
     return res
       .status(500)
       .json({ message: "Internal server error", error: error.message });
@@ -1959,20 +2301,6 @@ export const getAllItems = async (req, res) => {
     const items = await prisma.item.findMany({
       where: { user_id: userId },
       orderBy: { created_at: "desc" },
-      select: {
-        id: true,
-        category: true,
-        name: true,
-        model: true,
-        brand: true,
-        year_of_the_model: true,
-        engine: true,
-        transmission: true,
-        drivetrain: true,
-        current_mileage: true,
-        average_mileage_per_year: true,
-        user_notes: true,
-      },
     });
 
     if (items.length === 0) {
@@ -1982,10 +2310,10 @@ export const getAllItems = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Items retrieved successfully",
-      items,
+      items: items.map(toItemSummary),
     });
   } catch (error) {
-    console.error("Error retrieving items:", error);
+    console.error("Error retrieving items:", error.response?.data || error.message);
     return res
       .status(500)
       .json({ message: "Internal server error", error: error.message });
@@ -2015,21 +2343,17 @@ export const getItemById = async (req, res) => {
       return res.status(404).json({ message: "Item not found" });
     }
 
-    // Append full image URL if it exists
-    const formattedItem = {
-      ...item,
-      image_url: item.image_url
-        ? `${process.env.MEDIA_URL}/uploads/${item.image_url}`
-        : null,
-    };
+    if (item.user_id !== req.user?.userId) {
+      return res.status(403).json({ message: "You do not have access to this item" });
+    }
 
     return res.status(200).json({
       success: true,
       message: "Item retrieved successfully",
-      item: formattedItem,
+      item: { ...toItemDetail(item), user: item.user },
     });
   } catch (error) {
-    console.error("Error retrieving item:", error);
+    console.error("Error retrieving item:", error.response?.data || error.message);
     return res
       .status(500)
       .json({ message: "Internal server error", error: error.message });
@@ -2052,7 +2376,7 @@ export const getAllTasksForAnItem = async (req, res) => {
       tasks,
     });
   } catch (error) {
-    console.error("Error retrieving tasks:", error);
+    console.error("Error retrieving tasks:", error.response?.data || error.message);
     return res
       .status(500)
       .json({ message: "Internal server error", error: error.message });
@@ -2110,7 +2434,7 @@ export const changeTaskStatus = async (req, res) => {
       task: updatedTask,
     });
   } catch (error) {
-    console.error("Error updating task status:", error);
+    console.error("Error updating task status:", error.response?.data || error.message);
     return res
       .status(500)
       .json({ message: "Internal server error", error: error.message });
@@ -2134,7 +2458,7 @@ export const getAlltasksForAuser = async (req, res) => {
       tasks,
     });
   } catch (error) {
-    console.error("Error retrieving tasks:", error);
+    console.error("Error retrieving tasks:", error.response?.data || error.message);
     return res
       .status(500)
       .json({ message: "Internal server error", error: error.message });
@@ -2167,7 +2491,7 @@ export const deleteTask = async (req, res) => {
       .status(200)
       .json({ success: true, message: "Task deleted successfully" });
   } catch (error) {
-    console.error("Error deleting task:", error);
+    console.error("Error deleting task:", error.response?.data || error.message);
     return res
       .status(500)
       .json({ message: "Internal server error", error: error.message });
@@ -2208,7 +2532,7 @@ export const deleteItem = async (req, res) => {
       .status(200)
       .json({ success: true, message: "Item deleted successfully" });
   } catch (error) {
-    console.error("Error deleting item:", error);
+    console.error("Error deleting item:", error.response?.data || error.message);
     return res
       .status(500)
       .json({ message: "Internal server error", error: error.message });

@@ -253,9 +253,7 @@ model Notification {
 enum Category {
   Home
   Vehicle
-  Appliance
-  Electronics
-  Custom
+  Custom // shown as "Other" in the app
 }
 
 model Item {
@@ -283,6 +281,20 @@ model Item {
   user_notes               String?
   service_intervals        String[]
   forum_suggestions        Json?
+
+  // Home
+  property_type String?
+  zip_code      String?
+  own_or_rent   String?
+  systems       String[]
+
+  // Other
+  group       String?
+  description String?
+  due_date    DateTime?
+  repeat      String?
+  reminder    String?
+
   Tasks                    Tasks[]
 
   Questions Questions[]
@@ -409,13 +421,23 @@ model Questions {
   created_at      DateTime         @default(now())
   itemId          String
   item            Item             @relation(fields: [itemId], references: [id])
-  maintenanceItem String // e.g. "Water Pump"
+  maintenanceItem String? // e.g. "Water Pump" (vehicle only)
   itemKey         String // e.g. "water_pump"
-  category        String
-  priority        PriorityLevel
+  category        String?
+  priority        PriorityLevel?
   question        String
-  reason          String
-  userAnswer      OptionType?
+  reason          String?
+  userAnswer      OptionType? // vehicle questions (Yes / No / Planned)
+
+  // Home / Other questions: any answer type, asked in adaptive rounds
+  input_type         String?
+  options            Json?
+  optional           Boolean @default(false)
+  maintenance_impact String?
+  round              Int     @default(1)
+  answer             Json?
+  skipped            Boolean @default(false)
+
   recommendations Recommendation[]
 
   @@unique([itemId, itemKey])

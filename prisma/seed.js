@@ -267,7 +267,7 @@ async function main() {
       name: 'Washer / dryer',
       brand: 'LG',
       model: 'WM4000',
-      category: 'Appliance',
+      category: 'Custom',
       service_intervals: ['Clean filter — 6 months'],
       forum_suggestions: [],
     },

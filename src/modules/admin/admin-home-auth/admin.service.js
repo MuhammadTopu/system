@@ -18,6 +18,11 @@ const __dirname = path.dirname(__filename);
 import AdminRepository from "../../../common/repository/admin.repository.js";
 import FileService from "../../../common/services/file.service.js";
 import UserRepository from "../../../common/repository/user.repository.js";
+import {
+  signAccessToken,
+  signRefreshToken,
+  verifyRefreshToken,
+} from "../../../common/helper/token.helper.js";
 
 export class AdminService {
   constructor() {
@@ -62,16 +67,8 @@ export class AdminService {
       };
     }
 
-    const token = jwt.sign(
-      {
-        userId: user.id,
-        email: user.email,
-        role: user.role,
-        type: user.type,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "100d" },
-    );
+    const token = signAccessToken(user);
+    const refreshToken = signRefreshToken(user);
 
     return {
       statusCode: 200,
@@ -82,10 +79,55 @@ export class AdminService {
           id: user.id,
           name: user.name,
           email: user.email,
+          type: user.type,
+          role: user.role,
           createdAt: user.created_at,
           updatedAt: user.updated_at,
         },
         token,
+        refreshToken,
+      },
+    };
+  }
+
+  // Swap a valid refresh token for a new access token (and a new refresh token).
+  async refreshAccessToken(refreshToken) {
+    const invalid = {
+      statusCode: 401,
+      data: { message: "Invalid or expired refresh token" },
+    };
+
+    if (!refreshToken) {
+      return { statusCode: 400, data: { message: "refreshToken is required!" } };
+    }
+
+    let decoded;
+    try {
+      decoded = verifyRefreshToken(refreshToken);
+    } catch {
+      return invalid;
+    }
+
+    // only ADMIN accounts; a normal user's refresh token is rejected here
+    const user = await prisma.user.findFirst({
+      where: { id: decoded.userId, type: "ADMIN", status: "active", deleted_at: null },
+    });
+    if (!user) return invalid;
+
+    return {
+      statusCode: 200,
+      data: {
+        success: true,
+        message: "Token refreshed",
+        token: signAccessToken(user),
+        refreshToken: signRefreshToken(user),
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          type: user.type,
+          role: user.role,
+        },
       },
     };
   }

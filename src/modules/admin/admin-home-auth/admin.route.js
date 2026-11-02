@@ -9,6 +9,7 @@ import {
   getSubscriptionStats,
   activeSubscription,
   loginAdmin,
+  refreshAdminToken,
   updateAdminDetails,
   updateImage,
   getTotalUsers,
@@ -19,6 +20,7 @@ const router = express.Router();
 
 //--------------------------------------------------------admin login---------------------------------------------------------\\
 router.post("/login", loginAdmin);
+router.post("/refresh-token", refreshAdminToken);
 //--------------------------------------------------------home page------------------------------------------------------------\\
 //get total number of users
 router.get("/get-total-users", verifyUser("ADMIN"), getTotalUsers);

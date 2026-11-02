@@ -16,6 +16,18 @@ export const loginAdmin = async (req, res, next) => {
     next(error);
   }
 };
+export const refreshAdminToken = async (req, res, next) => {
+  try {
+    const result = await adminService.refreshAccessToken(req.body?.refreshToken);
+
+    return res
+      .status(result.statusCode)
+      .json(result.data);
+
+  } catch (error) {
+    next(error);
+  }
+};
 export const getTotalUsers = async (req, res, next) => {
   try {
     const result =

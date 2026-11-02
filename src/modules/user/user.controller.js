@@ -4,6 +4,7 @@ import {
   forgot_password_otp_send,
   login,
   social_login,
+  refresh_token,
   register_step_1_email,
   register_step_3,
   reset_password,
@@ -106,6 +107,20 @@ export const socialLogin = async (req, res, next) => {
     }
 
     const result = await userService.socialLogin(value);
+    return res.status(result.statusCode).json(result.data);
+  } catch (error) {
+    next(error);
+  }
+};
+export const refreshToken = async (req, res, next) => {
+  try {
+    const { value, error } = refresh_token.validate(req.body);
+
+    if (error) {
+      return res.status(400).json({ message: error.details[0].message });
+    }
+
+    const result = await userService.refreshAccessToken(value.refreshToken);
     return res.status(result.statusCode).json(result.data);
   } catch (error) {
     next(error);
