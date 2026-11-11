@@ -293,8 +293,9 @@ model Item {
   systems       String[]
 
   // Other
-  group       String?
-  description String?
+  group        String?
+  sub_category String?
+  description  String?
   due_date    DateTime?
   repeat      String?
   reminder    String?

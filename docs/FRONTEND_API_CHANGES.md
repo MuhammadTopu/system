@@ -166,6 +166,7 @@ The server generates service intervals with AI before saving. **If that fails, i
 | `category` | Yes | `Other` |
 | `name` | Yes | |
 | `group` | No | free text for now |
+| `sub_category` | No | free text. **Other only**: Home and Vehicle reject it |
 | `description` | No | |
 | `due_date` | No | `YYYY-MM-DD` |
 | `repeat` | No | text, for example `Never` |
@@ -219,7 +220,7 @@ Used by `add-item`, `get-all-items` and `get-item/:id`. Each category returns on
 ```json
 {
   "id": "…", "category": "Other", "name": "Repaint mailbox", "user_notes": null,
-  "group": null, "description": null, "due_date": "2026-12-01T00:00:00.000Z",
+  "group": null, "sub_category": null, "description": null, "due_date": "2026-12-01T00:00:00.000Z",
   "repeat": "Never", "reminder": "1 week before"
 }
 ```

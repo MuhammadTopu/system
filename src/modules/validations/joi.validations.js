@@ -44,6 +44,7 @@ export const otherItemSchema = Joi.object({
     category: Joi.string().valid("Custom").required(), // "Other" is mapped to Custom
     name: Joi.string().trim().min(1).required(),
     group: optionalText(),
+    sub_category: optionalText(),
     description: optionalText(),
     due_date: Joi.date().allow("").optional(),
     repeat: optionalText(),

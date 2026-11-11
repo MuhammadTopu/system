@@ -513,6 +513,7 @@ export const addItem = async (req, res) => {
           : {
               ...base,
               group: value.group || null,
+              sub_category: value.sub_category || null,
               description: value.description || null,
               due_date: value.due_date ? new Date(value.due_date) : null,
               repeat: value.repeat || null,
@@ -969,6 +970,7 @@ const ITEM_CONTEXT_SELECT = {
   own_or_rent: true,
   systems: true,
   group: true,
+  sub_category: true,
   description: true,
   due_date: true,
   repeat: true,

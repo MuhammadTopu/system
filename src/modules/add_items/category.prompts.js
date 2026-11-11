@@ -26,6 +26,7 @@ User notes: ${val(item.user_notes, "None")}`;
 
   return `Name: ${val(item.name)}
 Group: ${val(item.group)}
+Sub-category: ${val(item.sub_category)}
 Description: ${val(item.description)}
 Due date: ${formatDate(item.due_date)}
 Repeat: ${val(item.repeat)}

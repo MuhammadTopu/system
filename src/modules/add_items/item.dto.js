@@ -25,7 +25,7 @@ const FIELDS = {
     detail: [],
   },
   Custom: {
-    summary: ["group", "description", "due_date", "repeat", "reminder"],
+    summary: ["group", "sub_category", "description", "due_date", "repeat", "reminder"],
     detail: [],
   },
 };
