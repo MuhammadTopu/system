@@ -13,7 +13,7 @@ const val = (v, fallback = "Not available") =>
 
 const formatDate = (d) => (d ? new Date(d).toISOString().split("T")[0] : "Not available");
 
-const describeItem = (item) => {
+export const describeItem = (item) => {
   if (item.category === "Home") {
     return `Property name: ${val(item.name)}
 Property type: ${val(item.property_type)}
@@ -47,6 +47,98 @@ const describeAnswers = (answered) =>
           return `- [${q.itemKey}] ${q.question} -> ${a}`;
         })
         .join("\n");
+
+// Service intervals for a Home or Other item, one "Name - interval" line each.
+export const buildServiceIntervalPrompt = (item, maxItems) => {
+  const isHome = item.category === "Home";
+
+  const scope = isHome
+    ? `Cover the systems and features the user selected, adjusted for the property type and
+age. If no systems were selected, give general home maintenance intervals. Do not add
+items for systems the user does not have.`
+    : `If the entry is a physical asset or piece of equipment, give its routine maintenance
+intervals. If it is a recurring task, give the recommended frequency. If it is a
+one-time task with no maintenance, return exactly one line:
+1. One-time task - no recurring interval`;
+
+  return `
+Generate a recommended service interval list for the following ${isHome ? "property" : "item"}.
+
+${describeItem(item)}
+
+${scope}
+Make intervals specific to the details above where possible.
+
+FORMAT RULES:
+- Return a numbered list only.
+- One service item per line, in exactly this format:
+  1. Service Name - interval
+- Maximum ${maxItems} items.
+- No markdown, no bold, no asterisks, no bullet characters.
+- No blank lines.
+- No introduction sentence and no closing sentence.
+`.trim();
+};
+
+// Community-derived recommendations for a Home or Other item. Same JSON shape as
+// the vehicle forum suggestions, so the app can show them the same way.
+export const buildForumPrompt = (item) => {
+  const isHome = item.category === "Home";
+
+  return `
+You are Maintenance Genie, a preventative maintenance assistant.
+
+Your task is NOT to list forums. Your task is to report maintenance recommendations that
+${isHome ? "homeowner" : "owner"} communities have arrived at for the ${isHome ? "systems of this property" : "item below"}, where
+those recommendations DIFFER from the standard or manufacturer schedule.
+
+──────────────────────────────
+${isHome ? "PROPERTY" : "ITEM"}
+──────────────────────────────
+${describeItem(item)}
+
+──────────────────────────────
+RULES
+──────────────────────────────
+1. Return between 0 and 5 recommendations. Quality matters far more than quantity.
+2. ${isHome ? "Only cover the systems the user selected." : "Only cover this specific kind of equipment. If the entry is a one-time task, return an empty array."}
+3. Never invent a failure mode or an interval. Only report consensus you are confident is
+   real and commonly discussed.
+4. Generic advice such as "maintain it regularly" is NOT a finding. Only include an item
+   when owners report a real problem that the standard interval failed to prevent.
+5. The "reason" must name the concrete symptom or failure owners report. Do not use vague
+   benefits like "improves longevity".
+6. "source_forum" is REQUIRED. Use a real, well known community name (for example
+   "Reddit r/HomeImprovement", "DIY Chatroom"). If you cannot confidently name one, use
+   "Owner communities".
+7. "source_url" must be an empty string unless you are certain of a real URL. Never
+   fabricate a URL, thread title or link.
+8. "confidence" must be "High", "Medium" or "Low".
+9. Return an empty array if there is no known community recommendation that meets this
+   bar. An empty array is an acceptable answer. Never pad.
+10. Use plain language an average owner will understand.
+11. Return ONLY valid JSON. No markdown. No text outside the JSON.
+
+──────────────────────────────
+RETURN THIS EXACT JSON FORMAT
+──────────────────────────────
+{
+  "forum_suggestions": [
+    {
+      "maintenance_item": "Septic Tank Pumping",
+      "category": "Septic",
+      "manufacturer_interval": "Every 3-5 years",
+      "forum_recommended_interval": "Every 2-3 years",
+      "reason": "Owners with garbage disposals report slow drains and drain field backups when pumping is delayed.",
+      "applies_to": "Households with a garbage disposal",
+      "confidence": "Medium",
+      "source_forum": "Owner communities",
+      "source_url": ""
+    }
+  ]
+}
+`.trim();
+};
 
 const QUESTION_JSON_FORMAT = `{
   "needs_more_information": true,

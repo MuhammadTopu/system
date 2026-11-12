@@ -22,11 +22,11 @@ const FIELDS = {
   },
   Home: {
     summary: ["property_type", "year_of_the_model", "zip_code", "own_or_rent", "systems"],
-    detail: [],
+    detail: ["service_intervals", "forum_suggestions"],
   },
   Custom: {
     summary: ["group", "sub_category", "description", "due_date", "repeat", "reminder"],
-    detail: [],
+    detail: ["service_intervals", "forum_suggestions"],
   },
 };
 

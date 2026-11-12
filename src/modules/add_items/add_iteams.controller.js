@@ -5,7 +5,6 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import pkg from "jsonwebtoken";
-import axios from "axios";
 import sharp from "sharp";
 import Tesseract from "tesseract.js";
 import { validateItemBody } from "../validations/joi.validations.js";
@@ -14,11 +13,15 @@ import {
   MAX_QUESTION_ROUNDS,
   buildQuestionPrompt,
   buildTaskPrompt,
+  buildServiceIntervalPrompt,
+  buildForumPrompt,
   normalizeQuestions,
   validateAnswer,
 } from "./category.prompts.js";
 import { notifyUser, NOTIFICATION_TYPES } from "../notification/notification.service.js";
 import { toDueAt } from "./task.due.js";
+import { findShopsForTasks, resolveShopLocation } from "./shop.suggestions.js";
+import { openAiPost, parseJsonResponse } from "../../common/helper/openai.helper.js";
 import { isUserPremium } from "../../common/helper/subscription.helper.js";
 dotenv.config();
 
@@ -28,44 +31,6 @@ const { isEmail } = validator;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const parseJsonResponse = (raw) => {
-  let text = String(raw || "").trim();
-  if (text.startsWith("```")) {
-    text = text
-      .replace(/^```(?:json)?/, "")
-      .replace(/```$/, "")
-      .trim();
-  }
-  return JSON.parse(text);
-};
-
-// Same signature as axios.post. Tries the primary OpenAI key first and, if that
-// request fails, retries once with the fallback key.
-const openAiPost = async (url, body, config = {}) => {
-  const keys = [
-    ...new Set(
-      [process.env.CHAT_GPT_API_KEY, process.env.CHAT_GPT_FALL_BACK_API_KEY].filter(Boolean),
-    ),
-  ];
-  if (keys.length === 0) throw new Error("No OpenAI API key configured");
-
-  let lastError;
-  for (const [i, key] of keys.entries()) {
-    try {
-      return await axios.post(url, body, {
-        ...config,
-        headers: { ...config.headers, Authorization: `Bearer ${key}` },
-      });
-    } catch (err) {
-      lastError = err;
-      console.error(
-        `OpenAI request failed with ${i === 0 ? "primary" : "fallback"} key:`,
-        err.response?.data || err.message,
-      );
-    }
-  }
-  throw lastError;
-};
 
 
 // const generateItemData = async (item) => {
@@ -147,9 +112,33 @@ const openAiPost = async (url, body, config = {}) => {
 //   }
 // };
 
+// Service interval lines for a Home / Other item (free tier: up to 5). Throws if
+// the AI call fails.
+const generateServiceIntervals = async (item, maxItems) => {
+  const response = await openAiPost(
+    "https://api.openai.com/v1/chat/completions",
+    {
+      model: process.env.CHAT_GPT_MODEL_NAME || "gpt-4o",
+      messages: [
+        { role: "system", content: "You are a helpful assistant." },
+        { role: "user", content: buildServiceIntervalPrompt(item, maxItems) },
+      ],
+      max_tokens: 700,
+      temperature: 0.7,
+    },
+  );
+
+  return response.data.choices[0].message.content
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+};
+
 const generateItemData = async (item) => {
   try {
-    const serviceIntervalPrompt = `
+    const isVehicle = item.category === "Vehicle";
+
+    const vehicleIntervalPrompt = `
 Generate a recommended service interval list for the following item.
 
 - Category: ${item.category || "Unspecified"}
@@ -172,6 +161,10 @@ FORMAT RULES:
 - No blank lines.
 - No introduction sentence and no closing sentence.
 `.trim();
+
+    const serviceIntervalPrompt = isVehicle
+      ? vehicleIntervalPrompt
+      : buildServiceIntervalPrompt(item, 12);
 
     const serviceIntervalResponse = await openAiPost(
       "https://api.openai.com/v1/chat/completions",
@@ -196,13 +189,7 @@ FORMAT RULES:
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
 
-    // Forum-derived recommendations are a vehicle concept only.
-    // Remove this guard if the client wants it for other categories too.
-    if (item.category !== "Vehicle") {
-      return { service_intervals, forum_suggestions: [] };
-    }
-
-    const forumSuggestionPrompt = `
+    const vehicleForumPrompt = `
 You are Maintenance Genie, an automotive maintenance assistant.
 
 Your task is NOT to list forums. Your task is to report maintenance recommendations
@@ -285,6 +272,10 @@ RETURN THIS EXACT JSON FORMAT
   ]
 }
     `.trim();
+
+    const forumSuggestionPrompt = isVehicle
+      ? vehicleForumPrompt
+      : buildForumPrompt(item);
 
     const forumSuggestionResponse = await openAiPost(
       "https://api.openai.com/v1/chat/completions",
@@ -520,7 +511,43 @@ export const addItem = async (req, res) => {
               reminder: value.reminder || null,
             };
 
-      const created = await prisma.item.create({ data });
+      // Same as Vehicle: everyone gets service intervals (5 for free users, up to
+      // 12 for premium) and premium users also get forum suggestions. Nothing is
+      // saved unless the AI call succeeds.
+      let generated = null;
+      if (await isUserPremium(userId)) {
+        generated = await generateItemData(data); // null on failure
+      } else {
+        try {
+          generated = {
+            service_intervals: await generateServiceIntervals(data, 5),
+            forum_suggestions: [],
+          };
+        } catch (aiError) {
+          console.error(
+            "Error generating service intervals:",
+            aiError.response?.data || aiError.message,
+          );
+        }
+      }
+
+      if (!generated) {
+        if (req.file) {
+          const filePath = path.join(__dirname, "../../uploads", req.file.filename);
+          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        }
+        return res
+          .status(500)
+          .json({ message: "Failed to generate additional data for item" });
+      }
+
+      const created = await prisma.item.create({
+        data: {
+          ...data,
+          service_intervals: generated.service_intervals,
+          forum_suggestions: generated.forum_suggestions || [],
+        },
+      });
 
       notifyUser(userId, {
         title: "Item added",
@@ -532,7 +559,7 @@ export const addItem = async (req, res) => {
 
       return res.status(201).json({
         success: true,
-        message: "Item added successfully",
+        message: "Item added successfully with generated data",
         item: toItemDetail(created),
         imageUrl,
       });
@@ -2085,6 +2112,33 @@ How to use these answers:
       ),
     );
 
+    // AI-suggested shops near the user for each kind of task. Skipped when no
+    // location is known; a failure never fails the request.
+    let tasksOut = created;
+    if (created.length > 0) {
+      const owner = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { city: true, state: true, postal_code: true, country: true },
+      });
+      const location = resolveShopLocation({ body: req.body, item, user: owner });
+      const shopsByCategory = await findShopsForTasks(created, item.category, location);
+
+      if (shopsByCategory.size > 0) {
+        await prisma.$transaction(
+          [...shopsByCategory].map(([category, shops]) =>
+            prisma.tasks.updateMany({
+              where: { item_id: id, category },
+              data: { shop_suggestions: shops },
+            }),
+          ),
+        );
+        tasksOut = created.map((t) => ({
+          ...t,
+          shop_suggestions: shopsByCategory.get(t.category) ?? t.shop_suggestions,
+        }));
+      }
+    }
+
     if (created.length > 0) {
       notifyUser(userId, {
         title: "Your tasks are ready",
@@ -2095,7 +2149,7 @@ How to use these answers:
       });
     }
 
-    return res.json({ success: true, tasks: created });
+    return res.json({ success: true, tasks: tasksOut });
   } catch (error) {
     console.error("Error generating tasks:", error.response?.data || error.message);
     return res.status(500).json({ message: "Failed to generate tasks" });

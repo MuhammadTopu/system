@@ -181,13 +181,30 @@ Empty strings are accepted for the optional text fields.
 ```json
 {
   "success": true,
-  "message": "Item added successfully",
+  "message": "Item added successfully with generated data",
   "item": { "…": "see section 4" },
   "imageUrl": "https://…/uploads/abc.jpg"
 }
 ```
-For Vehicle the message is "Item added successfully with generated data".
-Home and Other are saved immediately and have no AI step.
+**All three categories** (Vehicle, Home and Other) now get AI-generated extras when the item is added:
+- `service_intervals`: a list of lines like `"Septic tank pumping - every 3-5 years"`. **Free users get up to 5, premium users up to 12.**
+- `forum_suggestions`: **premium users only** (free users get an empty list). Each entry says where owner communities recommend a different interval than the standard one:
+  ```json
+  {
+    "maintenance_item": "Septic Tank Pumping",
+    "category": "Septic",
+    "manufacturer_interval": "Every 3-5 years",
+    "forum_recommended_interval": "Every 2-3 years",
+    "reason": "Owners report slow drains and drain field backups when pumping is delayed.",
+    "applies_to": "Households with a garbage disposal",
+    "confidence": "Medium",
+    "source_forum": "Owner communities",
+    "source_url": ""
+  }
+  ```
+  `confidence` is `High`, `Medium` or `Low`. `source_url` is often an empty string. Only show a link when it is not empty. The list can be empty (`[]`) when nothing is known.
+
+Because the server calls the AI before saving, **add-item can take a few seconds** (premium users a bit longer, since they get two AI calls). Show a loading state and use a long enough request timeout (30 seconds is safe).
 
 ### 3.5 Errors
 
@@ -198,7 +215,7 @@ Home and Other are saved immediately and have no AI step.
 | 400 | `{ "message": "Home category cannot have these fields" }` (fields from another category) |
 | 400 | `{ "message": "Invalid system \"bogus\"" }` |
 | 404 | User not found |
-| 500 | Vehicle only: AI generation failed, nothing saved |
+| 500 | `Failed to generate additional data for item`: the AI call failed, **nothing is saved** (all categories). Show a "try again" message |
 
 If a request has fields from another category, only the "cannot have these fields" message is returned.
 
@@ -241,7 +258,8 @@ The list no longer includes `image_url`. Use get-item for that.
 ### 4.2 `GET /items/get-item/:id` and the add-item response (**detail** form)
 The summary fields plus:
 - All categories: `created_at`, `current_date`, `image_url` (**now a full URL**, or `null`).
-- Vehicle also: `purchase_date`, `total_mileage`, `service_intervals`, `forum_suggestions`.
+- All categories also: `service_intervals` (list of strings) and `forum_suggestions` (list of objects, see section 3.4).
+- Vehicle also: `purchase_date`, `total_mileage`.
 - `get-item` also includes `user: { email, name }`.
 
 Returns **403** if the item belongs to another user, and 404 if it doesn't exist.
@@ -344,12 +362,33 @@ Response (200):
 Errors (400, with `message`): an unknown or already answered `question_id`, a required question missing, an invalid answer for the type (for example a value not in `options`, or a non-number for `numeric`), or a duplicate answer.
 
 ### 5.3 `POST /items/:id/generate-tasks` (all categories)
-No request body. Response: `{ "success": true, "tasks": [ … ] }`.
+The body is **optional**. It only matters for shop suggestions (see below). Response: `{ "success": true, "tasks": [ … ] }`.
 - It is generated once per item. Calling it again returns the existing tasks.
 - For Home and Other, the schedule uses the item's details and all answers.
 - For an Other item that is a one-time task, a single task is returned with the due date.
 - Task fields are unchanged: `id`, `item_id`, `item_name`, `upcoming_task`, `description`, `category`, `recommended_interval`, `last_service_assumption`, `next_due_mileage`, `next_due_date`, `priority`, `status`, `manufacturer_interval_uncertain`, and so on.
 - `status` values: `DueNow`, `Upcoming`, `Future`, `Overdue`, `Complete`. `priority` values: `High`, `Medium`, `Low`.
+
+**Shop suggestions (`shop_suggestions` on each task)**
+
+Each task has a `shop_suggestions` field. When it is filled, it is a list of up to 3 businesses that **the AI suggests** for that kind of task near the user's city or ZIP code, for example septic companies for a septic task:
+```json
+"shop_suggestions": [
+  {
+    "name": "ABC Septic",
+    "description": "Pumping and inspection",
+    "google_map_url": "https://www.google.com/maps/search/?api=1&query=ABC%20Septic%20Springfield%2C%20IL",
+    "ai_suggested": true
+  }
+]
+```
+- **These are suggestions, not verified listings.** The AI has no live map data, so a business may be closed, or may not serve that exact area. There is deliberately **no rating, review count, phone number or address**, because the AI would have to invent them. **Please label the section clearly**, for example "Suggested shops (verify before visiting)".
+- `google_map_url` is a Google Maps search for that business near the user. It opens the user's Maps app, where they can check that the shop exists and see its real details. Use it for a "View on map" button.
+- `description` is a short text (under 15 words) saying what the business does.
+- The field is `null` when the AI had nothing to suggest, when no location is known, or when the AI call failed. **Always handle `null`** and hide the section then.
+- Suggestions are made once per kind of task (`category`), so all tasks of the same category share the same list.
+- **Where it looks:** the app can send an optional body to `generate-tasks`: `{ "location": "Springfield, IL" }`. If the body is empty, the server uses, in this order: the Home item's `zip_code`, then the user's saved profile (city, state, postal code, country). With no location at all, there are no suggestions.
+- Shop suggestions are only filled when the tasks are generated. Tasks that already exist are not updated.
 
 ---
 

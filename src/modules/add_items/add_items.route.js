@@ -27,7 +27,7 @@ router.get('/get-all-items', verifyUser("USER"), getAllItems);
 router.get('/get-all-completed-tasks', verifyUser("USER"), getAllcomletedTasksForUser);
 
 //generate questions for an item
-router.get("/:id/questions", verifyUser("USER"), generateQuestions);
+router.post("/:id/questions", verifyUser("USER"), generateQuestions);
 
 //submit answers for an item
 router.post("/:id/submit-answers", verifyUser("USER"), submitAnswers);
