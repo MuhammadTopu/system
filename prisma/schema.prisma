@@ -67,6 +67,7 @@ model User {
   is_two_factor_enabled Int?      @default(0)
   two_factor_secret     String? // secret key for two factor authentication
   fcm_token             String? // Firebase Cloud Messaging device token for push notifications
+  deletion_reason       String? // why the user deleted the account (deleted_at says when)
 
   // Cached summary of the user's subscription, kept in sync by the RevenueCat webhook
   subscribed_at            DateTime? // when the user first subscribed
@@ -87,6 +88,7 @@ model User {
   SubscriptionEvent     SubscriptionEvent[]
   PaymentTransaction    PaymentTransaction[]
   Mail                  Mail[]
+  AppReport             AppReport[]
 
   @@map("users")
 }
@@ -252,6 +254,56 @@ model Notification {
   data  Json?
 
   @@map("notifications")
+}
+
+enum ReportCategory {
+  bug
+  crash
+  performance
+  ui_issue
+  ai_suggestions
+  notifications
+  payment
+  account
+  feature_request
+  other
+}
+
+enum ReportStatus {
+  open
+  in_review
+  resolved
+  rejected
+}
+
+// A complaint / problem report a user sends about the app
+model AppReport {
+  id         String    @id @default(cuid())
+  created_at DateTime  @default(now())
+  updated_at DateTime  @default(now()) @updatedAt
+  deleted_at DateTime?
+
+  user_id String
+  user    User   @relation(fields: [user_id], references: [id])
+
+  category    ReportCategory
+  subject     String
+  description String         @db.Text
+  screenshots String[] // file names in /uploads, at most 3
+
+  // where the problem happened (sent by the app)
+  platform     String? // android | ios
+  app_version  String?
+  device_model String?
+  os_version   String?
+
+  status         ReportStatus @default(open)
+  admin_response String?      @db.Text
+  responded_at   DateTime?
+
+  @@index([user_id, created_at])
+  @@index([status, created_at])
+  @@map("app_reports")
 }
 
 enum Category {

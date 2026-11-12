@@ -73,7 +73,9 @@ export class UserService {
     if (existingUser) {
       return {
         statusCode: 400,
-        message: "Email already registered",
+        message: existingUser.deleted_at
+          ? "This email belongs to a deleted account. Please contact support."
+          : "Email already registered",
       };
     }
 
@@ -422,6 +424,15 @@ export class UserService {
     }
 
     if (user) {
+      if (user.deleted_at) {
+        return {
+          statusCode: 403,
+          data: {
+            message: "This account has been deleted. Please contact support.",
+            code: "ACCOUNT_DELETED",
+          },
+        };
+      }
       if (user.status === "suspended") {
         return {
           statusCode: 403,
@@ -593,7 +604,7 @@ export class UserService {
 
     const user = await this.userRepository.findByEmail(email);
 
-    if (!user) {
+    if (!user || user.deleted_at) {
       return {
         statusCode: 404,
         data: {
@@ -762,7 +773,7 @@ export class UserService {
 
     const user = await this.userRepository.findByEmail(email);
 
-    if (!user) {
+    if (!user || user.deleted_at) {
       return {
         statusCode: 404,
         data: {
@@ -958,6 +969,59 @@ export class UserService {
           email: updatedUser.email,
           name: updatedUser.name,
         },
+      },
+    };
+  }
+  // Delete the account (soft delete). The row and everything linked to it stay in
+  // the database; deleted_at is set, so the user can no longer log in, refresh a
+  // token or use an old one, and gets no more reminders or pushes.
+  // Accounts with a password must send it; Google / Apple accounts have none.
+  async deleteAccount({ userId, password, reason }) {
+    if (!userId) {
+      return {
+        statusCode: 400,
+        data: { message: "User not authenticated" },
+      };
+    }
+
+    const user = await prisma.user.findFirst({
+      where: { id: userId, type: "USER", deleted_at: null },
+    });
+    if (!user) {
+      return { statusCode: 404, data: { message: "User not found" } };
+    }
+
+    if (user.password) {
+      if (!password) {
+        return {
+          statusCode: 400,
+          data: { message: "Password is required to delete your account" },
+        };
+      }
+      const isPasswordValid = await bcrypt.compare(password, user.password);
+      if (!isPasswordValid) {
+        return {
+          statusCode: 401,
+          data: { message: "Password is incorrect" },
+        };
+      }
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        deleted_at: new Date(),
+        deletion_reason: reason || null,
+        // no more pushes to this device
+        fcm_token: null,
+      },
+    });
+
+    return {
+      statusCode: 200,
+      data: {
+        success: true,
+        message: "Your account has been deleted",
       },
     };
   }

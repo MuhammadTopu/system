@@ -13,7 +13,8 @@ import {
   updateUserDetails,
   changePassword,
   sendMailToAdmin,
-  getMe
+  getMe,
+  deleteAccount
 } from './user.controller.js';
 import { upload } from '../../config/Multer.config.js';
 import { verifyUser } from '../../common/middlewares/verifyUsers.js';
@@ -52,6 +53,8 @@ router.put('/update-image', upload.single('profilePicture'), verifyUser("USER"),
 router.put('/update-user-details', verifyUser("USER"), updateUserDetails);
 //support
 router.post('/sende-mail', verifyUser("USER"), sendMailToAdmin)
-//get me 
+//get me
 router.get('/get-me', verifyUser("USER"), getMe);
+//delete my account (soft delete)
+router.post('/delete-account', verifyUser("USER"), deleteAccount);
 export default router;

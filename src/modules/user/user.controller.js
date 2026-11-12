@@ -1,6 +1,7 @@
 import userService from "./user.service.js";
 import {
   change_password,
+  delete_account,
   forgot_password_otp_send,
   login,
   social_login,
@@ -243,6 +244,26 @@ export const sendMailToAdmin = async (req, res, next) => {
 export const getMe = async (req, res, next) => {
   try {
     const result = await userService.getMe(req.user?.userId);
+
+    return res.status(result.statusCode).json(result.data);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// POST /api/users/delete-account
+export const deleteAccount = async (req, res, next) => {
+  try {
+    const { value, error } = delete_account.validate(req.body || {});
+    if (error) {
+      return res.status(400).json({ message: error.details[0].message });
+    }
+
+    const result = await userService.deleteAccount({
+      userId: req.user?.userId,
+      password: value.password,
+      reason: value.reason,
+    });
 
     return res.status(result.statusCode).json(result.data);
   } catch (error) {

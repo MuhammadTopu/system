@@ -26,6 +26,7 @@ class UserRepository {
       email,
       type: "USER",
       status: "active",
+      deleted_at: null,
     },
   });
 }

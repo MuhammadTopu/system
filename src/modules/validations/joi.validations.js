@@ -150,6 +150,40 @@ export const admin_send_notification = Joi.object({
     }),
 });
 
+export const delete_account = Joi.object({
+    password: Joi.string().allow("", null).optional(),
+    reason: Joi.string().trim().max(500).allow("", null).optional(),
+});
+
+export const REPORT_CATEGORIES = [
+    "bug",
+    "crash",
+    "performance",
+    "ui_issue",
+    "ai_suggestions",
+    "notifications",
+    "payment",
+    "account",
+    "feature_request",
+    "other",
+];
+export const REPORT_STATUSES = ["open", "in_review", "resolved", "rejected"];
+
+export const create_app_report = Joi.object({
+    type: Joi.string().valid(...REPORT_CATEGORIES).required(),
+    subject: Joi.string().trim().min(3).max(120).required(),
+    description: Joi.string().trim().min(5).max(2000).required(),
+    platform: Joi.string().trim().lowercase().valid("android", "ios").optional(),
+    app_version: Joi.string().trim().max(30).optional(),
+    device_model: Joi.string().trim().max(80).optional(),
+    os_version: Joi.string().trim().max(30).optional(),
+});
+
+export const admin_update_report = Joi.object({
+    status: Joi.string().valid(...REPORT_STATUSES).optional(),
+    admin_response: Joi.string().trim().min(1).max(2000).optional(),
+}).or("status", "admin_response");
+
 export const refresh_token = Joi.object({
     refreshToken: Joi.string().required(),
 });

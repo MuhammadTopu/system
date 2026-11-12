@@ -24,6 +24,11 @@ All errors are JSON with a `message` field.
 | Notifications | `DELETE /notifications/:id` | **New.** Soft delete one notification |
 | Admin | `POST /admin/notifications/send` | **New.** Send a custom system message |
 | Admin | `POST /admin/notifications/run-task-reminders` | **New.** Run the task reminder job now |
+| Account | `POST /users/delete-account` | **New.** The user deletes their own account (soft delete, section 8) |
+| Reports | `POST /reports` | **New.** Send an app complaint, with optional screenshots (section 9) |
+| Reports | `GET /reports`, `GET /reports/:id`, `GET /reports/categories` | **New.** The user's own reports and the category list |
+| Admin | `GET /admin/reports`, `GET /admin/reports/:id`, `PATCH /admin/reports/:id` | **New.** Review reports and answer users |
+| Auth | any protected endpoint | A deleted account's token now returns 401 with `code: "ACCOUNT_DELETED"` |
 
 Not changed: `get-all-completed-tasks`, `all-tasks`, `:id/tasks`, `upload-maintenance-history/:id`, `toggle-task-status/:id`, `delete-task/:id`, `delete-item/:id`.
 
@@ -422,6 +427,7 @@ All Android notifications use the channel id `high_importance_channel`. Create t
 | `premium_payment_issue` | Renewal payment failed | |
 | `premium_expired` | Premium ended | |
 | `premium_refunded` | Purchase refunded | |
+| `report_update` | An admin answered the user's report or closed it | report id |
 | `system` | A custom message sent by an admin | |
 
 After a purchase or renewal, call `POST /users/refresh-token` to get the new `role`.
@@ -520,12 +526,129 @@ Authorization: Bearer <admin access token>
 
 ---
 
-## 8. Error quick reference
+## 8. Delete account (user token required)
+
+**`POST /users/delete-account`**
+
+```json
+{ "password": "MyPassword123", "reason": "I no longer use the app" }
+```
+- `password`: **required for accounts that have a password** (email sign-up). Google and Apple accounts have no password, so for them send no password (an empty body `{}` is fine).
+- `reason`: optional, max 500 characters. Shown to admins only.
+- Use POST (not DELETE) so the body is easy to send from any HTTP client.
+
+Response (200): `{ "success": true, "message": "Your account has been deleted" }`
+
+| Status | Message |
+|---|---|
+| 400 | `Password is required to delete your account` (password account, none sent) |
+| 401 | `Password is incorrect` |
+| 404 | `User not found` (already deleted) |
+
+**What "delete" means:** it is a **soft delete**. The server keeps all of the user's data and only marks the account deleted. After that:
+- Login, social login and refresh-token no longer work for the account. Email login returns the normal `Email or password does not match`. Social login returns 403 with `code: "ACCOUNT_DELETED"`.
+- The old access token stops working immediately. **Every protected endpoint returns 401 with `{ "message": "This account has been deleted", "code": "ACCOUNT_DELETED" }`.** When the app sees `code: "ACCOUNT_DELETED"`, clear the stored tokens and go to the login screen. Don't try to refresh.
+- No more push notifications or reminders.
+- The email address stays reserved. Signing up again with it returns `This email belongs to a deleted account. Please contact support.` Restoring or re-creating an account is a support action.
+- **A store subscription is not cancelled by deleting the account.** Tell the user (before they confirm) to cancel it in Google Play or the App Store first.
+
+Suggested flow in the app: confirm dialog → (password field for email accounts) → call the endpoint → clear tokens, FCM token and local data → login screen.
+
+---
+
+## 9. App reports / complaints
+
+Users can report a problem with the app. Admins review the reports and can answer. All user endpoints need the user token; they only ever show the user's **own** reports.
+
+**`GET /reports/categories`**: the category list for the dropdown.
+```json
+{ "success": true, "categories": [ { "value": "bug", "label": "Something is not working" }, "…" ] }
+```
+Values: `bug`, `crash`, `performance`, `ui_issue`, `ai_suggestions`, `notifications`, `payment`, `account`, `feature_request`, `other`.
+
+**`POST /reports`**: send a report. Use `multipart/form-data` (needed for screenshots; plain text fields work too).
+
+| Field | Required | Notes |
+|---|---|---|
+| `type` | Yes | one of the values above |
+| `subject` | Yes | 3 to 120 characters |
+| `description` | Yes | 5 to 2000 characters |
+| `platform` | No | `android` or `ios` |
+| `app_version` | No | for example `1.0.3` (max 30) |
+| `device_model` | No | for example `Pixel 8` (max 80) |
+| `os_version` | No | for example `14` (max 30) |
+| `screenshots` | No | up to **3** images, field name `screenshots` (repeat it per file). JPG, PNG or GIF, max 5 MB each |
+
+Sending `platform`, `app_version`, `device_model` and `os_version` automatically helps a lot with debugging. We recommend always sending them.
+
+Response (201):
+```json
+{
+  "success": true,
+  "message": "Report sent. Thank you for helping us improve the app.",
+  "report": {
+    "id": "…",
+    "type": "crash",
+    "type_label": "App crashes or freezes",
+    "subject": "App closes when I add an item",
+    "description": "Every time I tap Save on the Home form the app closes.",
+    "screenshots": ["https://…/uploads/3f2a….png"],
+    "platform": "android",
+    "app_version": "1.0.3",
+    "device_model": "Pixel 8",
+    "os_version": "14",
+    "status": "open",
+    "admin_response": null,
+    "responded_at": null,
+    "created_at": "2026-11-13T09:00:00.000Z",
+    "updated_at": "2026-11-13T09:00:00.000Z"
+  }
+}
+```
+Errors: 400 for validation (`message` says which field), 400 for a bad image (`Only JPG, PNG or GIF images are allowed`, `Each image must be 5 MB or smaller`, or too many files), **429** `You can send at most 5 reports per day…` (limit: 5 reports per user per rolling 24 hours).
+
+**`GET /reports`**: the user's reports, newest first. Query (all optional): `page` (default 1), `limit` (default 20, max 100), `status` (`open`, `in_review`, `resolved`, `rejected`).
+```json
+{ "success": true, "message": "Reports retrieved successfully", "reports": [ { "…same shape as above…" } ], "page": 1, "limit": 20, "total": 3, "totalPages": 1 }
+```
+
+**`GET /reports/:id`**: one report (`{ "success": true, "message": "…", "report": { … } }`). 404 `Report not found` if it doesn't exist or is not the user's.
+
+**Report status:** `open` (just sent) → `in_review` → `resolved` or `rejected`. When an admin answers, `admin_response` and `responded_at` are filled in, and the user gets a push and a notification list entry with `type: "report_update"` and `entity_id` = the report id (open that report on tap). Users cannot edit or delete a report.
+
+### 9.1 Admin panel: reports (ADMIN token required)
+
+**`GET /admin/reports`**: all reports, newest first. Query (all optional): `status`, `type`, `search` (matches subject, description or the user's email), `page`, `limit` (default 20, max 100).
+
+Each report has the same fields as above plus the sender:
+```json
+{ "id": "…", "type": "bug", "subject": "…", "status": "open", "…": "…",
+  "user": { "id": "…", "name": "Sam", "email": "sam@example.com", "account_deleted": false } }
+```
+The response also has `openCount`: the number of open reports in total (for a badge), regardless of the filters. Reports of deleted accounts are still listed, with `account_deleted: true`.
+
+**`GET /admin/reports/:id`**: one report with the user. 404 `Report not found`.
+
+**`PATCH /admin/reports/:id`**: change the status and / or answer the user. Send at least one field.
+```json
+{ "status": "resolved", "admin_response": "Fixed in version 1.0.4. Please update the app." }
+```
+- `status`: `open`, `in_review`, `resolved` or `rejected`. `admin_response`: 1 to 2000 characters (shown to the user).
+- The user is notified when there is an `admin_response`, or when the status becomes `resolved` or `rejected`. A deleted account gets no notification.
+- Response (200): `{ "success": true, "message": "Report updated", "report": { … } }`
+
+**Admin user list:** `GET /admin/user-management/get-all-users` now also returns `deleted_at` and `deletion_reason` for each user, so deleted accounts can be shown or filtered in the panel.
+
+---
+
+## 10. Error quick reference
 
 | Status | Meaning |
 |---|---|
 | 400 | Validation error. Show `message` |
+| 401 + `code: "ACCOUNT_DELETED"` | The account was deleted. Clear tokens and go to login. Don't refresh |
 | 401 | Access token invalid or expired. Call refresh, then retry |
+| 429 | Too many reports today |
 | 403 + `premiumRequired: true` | Free user on a premium endpoint. Show the upgrade screen |
 | 403 | Not your item |
 | 404 | Item or user not found |

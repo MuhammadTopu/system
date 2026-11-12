@@ -45,6 +45,8 @@ export class UserManagementService {
       email: user.email,
       status: user.status,
       created_at: user.created_at,
+      deleted_at: user.deleted_at,
+      deletion_reason: user.deletion_reason,
     }));
 
     const totalPages = Math.ceil(total / limit);

@@ -67,6 +67,19 @@ app.use((req, res, next) => {
 });
 
 app.use((err, req, res, next) => {
+  // Upload problems (file too big, too many files, wrong type) are the client's fault
+  if (err.name === "MulterError" || err.message === "Invalid file type") {
+    const message =
+      err.code === "LIMIT_FILE_SIZE"
+        ? "Each image must be 5 MB or smaller"
+        : err.code === "LIMIT_UNEXPECTED_FILE" || err.code === "LIMIT_FILE_COUNT"
+          ? "Too many files, or wrong field name (use 'screenshots', max 3)"
+          : err.message === "Invalid file type"
+            ? "Only JPG, PNG or GIF images are allowed"
+            : err.message;
+    return res.status(400).json({ message });
+  }
+
   // Errors caused by the client (malformed JSON, body too large, ...) are 4xx
   if (err.status >= 400 && err.status < 500) {
     return res.status(err.status).json({

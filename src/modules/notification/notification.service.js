@@ -20,6 +20,7 @@ export const NOTIFICATION_TYPES = {
   PREMIUM_PAYMENT_ISSUE: "premium_payment_issue",
   PREMIUM_EXPIRED: "premium_expired",
   PREMIUM_REFUNDED: "premium_refunded",
+  REPORT_UPDATE: "report_update",
   SYSTEM: "system",
 };
 
