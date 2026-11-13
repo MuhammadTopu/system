@@ -2112,8 +2112,8 @@ How to use these answers:
       ),
     );
 
-    // AI-suggested shops near the user for each kind of task. Skipped when no
-    // location is known; a failure never fails the request.
+    // AI-suggested shops for each kind of task, near the user when a location is
+    // known (otherwise well-known chains); a failure never fails the request.
     let tasksOut = created;
     if (created.length > 0) {
       const owner = await prisma.user.findUnique({

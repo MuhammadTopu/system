@@ -18,16 +18,20 @@ const mapsSearchUrl = (query) =>
 const buildPrompt = (categories, itemCategory, locationText) => `
 You are Maintenance Genie. Suggest businesses where a person can get these ${
   itemCategory === "Vehicle" ? "vehicle" : itemCategory === "Home" ? "home" : "maintenance"
-} services near: ${locationText}
+} services ${
+  locationText
+    ? `near: ${locationText}`
+    : "(the person's location is unknown, so suggest well-known national chains or online services available in most areas)"
+}
 
 Service categories:
 ${categories.map((c) => `- ${c}`).join("\n")}
 
 RULES:
-- For each category, suggest up to ${MAX_SHOPS} businesses you are reasonably confident operate in
-  or serve that area. Well-known regional or national companies are fine.
-- If you are not confident about specific businesses for a category, return fewer, or an empty
-  array. NEVER invent a business name.
+- For EVERY category, suggest 2 to ${MAX_SHOPS} real businesses. Well-known national or regional
+  chains, manufacturers' service centers and reputable online services are all fine, as long as
+  they serve that area. A category must only be empty if no kind of business could help at all.
+- NEVER invent a business name. Prefer a well-known real company over a guess about a local one.
 - Do not give ratings, phone numbers, addresses or links. Only the business name and a short
   description (under 15 words) of what they do.
 - Return ONLY valid JSON. No markdown. No text outside the JSON.
@@ -47,7 +51,7 @@ RETURN THIS EXACT JSON FORMAT:
 // fails, the tasks are simply created without shops.
 export const findShopsForTasks = async (tasks, itemCategory, location) => {
   const result = new Map();
-  if (!location?.text) return result;
+  const locationText = location?.text || "";
 
   const categories = [
     ...new Set(tasks.map((t) => t.category).filter(Boolean)),
@@ -56,7 +60,7 @@ export const findShopsForTasks = async (tasks, itemCategory, location) => {
   // reuse what was already suggested for this place in the last 24 hours
   const missing = [];
   for (const category of categories) {
-    const hit = cache.get(`${itemCategory}|${category}|${location.text}`);
+    const hit = cache.get(`${itemCategory}|${category}|${locationText}`);
     if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
       if (hit.shops.length) result.set(category, hit.shops);
     } else {
@@ -69,7 +73,7 @@ export const findShopsForTasks = async (tasks, itemCategory, location) => {
     const response = await openAiPost("https://api.openai.com/v1/chat/completions", {
       model: process.env.CHAT_GPT_MODEL_NAME || "gpt-4o",
       messages: [
-        { role: "user", content: buildPrompt(missing, itemCategory, location.text) },
+        { role: "user", content: buildPrompt(missing, itemCategory, locationText) },
       ],
       temperature: 0.3,
       response_format: { type: "json_object" },
@@ -89,11 +93,11 @@ export const findShopsForTasks = async (tasks, itemCategory, location) => {
         .slice(0, MAX_SHOPS)
         .map((s) => ({
           ...s,
-          google_map_url: mapsSearchUrl(`${s.name} ${location.text}`),
+          google_map_url: mapsSearchUrl(`${s.name} ${locationText}`.trim()),
           ai_suggested: true,
         }));
 
-      cache.set(`${itemCategory}|${category}|${location.text}`, { at: Date.now(), shops });
+      cache.set(`${itemCategory}|${category}|${locationText}`, { at: Date.now(), shops });
       if (shops.length) result.set(category, shops);
     }
   } catch (err) {
