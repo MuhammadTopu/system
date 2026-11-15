@@ -132,11 +132,8 @@ export class UserService {
       console.error("sendRegistrationOTPEmail failed:", error),
     );
 
-    console.log("OTP sent to email:", email, "OTP:", otp);
-
     return {
       statusCode: 200,
-      otp,
       message:
         "OTP sent successfully to your email. Please verify it to continue.",
     };

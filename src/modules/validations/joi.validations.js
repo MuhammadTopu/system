@@ -119,7 +119,10 @@ export const register_step_1_email = Joi.object({
 
 export const verify_otp = Joi.object({
     email: Joi.string().email().required(),
-    otp: Joi.string().length(4).required(),
+    // 6 digits; 4 is still accepted so a code sent just before this change keeps working
+    otp: Joi.string().pattern(/^([0-9]{4}|[0-9]{6})$/).required().messages({
+        "string.pattern.base": "OTP must be 6 digits",
+    }),
 });
 
 export const register_step_3 = Joi.object({
@@ -212,5 +215,7 @@ export const change_password = Joi.object({
 
 export const verify_forgot_password_otp = Joi.object({
     email: Joi.string().email().required(),
-    otp: Joi.string().length(4).required(),
+    otp: Joi.string().pattern(/^([0-9]{4}|[0-9]{6})$/).required().messages({
+        "string.pattern.base": "OTP must be 6 digits",
+    }),
 });

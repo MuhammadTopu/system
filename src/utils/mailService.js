@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 import { emailForgotPasswordOTP, emailRegisterUserOTP,sendAdminInvitationEmails,receiveEmailTemplate } from "../constants/email_message.js"; 
@@ -5,9 +6,8 @@ import { emailForgotPasswordOTP, emailRegisterUserOTP,sendAdminInvitationEmails,
 dotenv.config();  
 
 
-export const generateOTP = () => {
-  return (Math.floor(1000 + Math.random() * 9000)).toString().padStart(4, '0');
-};
+// 6 digits (1 in a million to guess), from a cryptographically secure source
+export const generateOTP = () => crypto.randomInt(100000, 1000000).toString();
 
 
 // Send email function

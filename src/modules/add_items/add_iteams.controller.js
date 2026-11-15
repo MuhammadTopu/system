@@ -21,6 +21,7 @@ import {
 import { notifyUser, NOTIFICATION_TYPES } from "../notification/notification.service.js";
 import { toDueAt } from "./task.due.js";
 import { findShopsForTasks, resolveShopLocation } from "./shop.suggestions.js";
+import { refreshTaskStatuses, statusFromDueAt } from "./task.status.js";
 import { openAiPost, parseJsonResponse } from "../../common/helper/openai.helper.js";
 import { isUserPremium } from "../../common/helper/subscription.helper.js";
 dotenv.config();
@@ -2164,11 +2165,22 @@ export const uploadReceipt = async (req, res) => {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
+    const uploadedPath = path.join(__dirname, "../../uploads", req.file.filename);
+    const discardUpload = () => {
+      if (fs.existsSync(uploadedPath)) fs.unlinkSync(uploadedPath);
+    };
+
     const task = await prisma.tasks.findUnique({ where: { id } });
 
     if (!task) {
-      fs.unlinkSync(path.join(__dirname, "../../uploads", req.file.filename));
+      discardUpload();
       return res.status(404).json({ message: "Task not found" });
+    }
+
+    // only the owner of the task may attach a receipt to it
+    if (task.user_id !== req.user?.userId) {
+      discardUpload();
+      return res.status(403).json({ message: "You do not have access to this task" });
     }
 
     const localPath = path.join(__dirname, "../../uploads", req.file.filename);
@@ -2273,13 +2285,14 @@ If you can't find any services, respond with: { "maintenance_history": [] }
       success: true,
       message: "Receipt uploaded and maintenance history updated.",
       task: updatedTask,
-      receiptUrl: `http://localhost:8070/uploads/${req.file.filename}`,
+      receiptUrl: `${process.env.BASE_URL}/uploads/${req.file.filename}`,
     });
   } catch (error) {
     console.error("Error in uploadReceipt:", error.response?.data || error.message);
 
     if (req.file) {
-      fs.unlinkSync(path.join(__dirname, "../../uploads", req.file.filename));
+      const leftover = path.join(__dirname, "../../uploads", req.file.filename);
+      if (fs.existsSync(leftover)) fs.unlinkSync(leftover);
     }
 
     return res.status(500).json({
@@ -2289,81 +2302,84 @@ If you can't find any services, respond with: { "maintenance_history": [] }
   }
 };
 
-//need to work in here
-export const updateStatusOfTask = async (req, res) => {
-  try {
-    const { id } = req.params;
-    console.log("id", id);
-    const userId = req.user?.userId;
-    console.log("userId", userId);
-    if (!userId) {
-      return res.status(400).json({ message: "User ID is required" });
-    }
-
-    const task = await prisma.tasks.findUnique({
-      where: { id: id },
-      select: { id: true, status: true, user_id: true },
-    });
-
-    console.log(task.user_id);
-
-    // user is owner of the task
-    if (userId !== task.user_id) {
-      return res
-        .status(403)
-        .json({ message: "You are not authorized to update this task" });
-    }
-
-    if (!id) {
-      return res.status(400).json({ message: "Task ID is required" });
-    }
-
-    if (!task) {
-      return res.status(404).json({ message: "Task not found" });
-    }
-
-    const newStatus = task.status === "Due" ? "Completed" : "Due";
-
-    const updatedTask = await prisma.tasks.update({
-      where: { id: id },
-      data: { status: newStatus },
-    });
-
-    return res.status(200).json({
-      message: "Task status updated successfully",
-      task: updatedTask,
-    });
-  } catch (error) {
-    console.error("Error updating task status:", error.response?.data || error.message);
-    return res
-      .status(500)
-      .json({ message: "Internal server error", error: error.message });
-  }
-};
-// get all completed task for an user
-export const getAllcomletedTasksForUser = async (req, res) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(400).json({ message: "User ID is required" });
-    }
-    const tasks = await prisma.tasks.findMany({
-      where: { user_id: userId, status: "Completed" },
-      orderBy: { created_at: "desc" },
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: "Completed Tasks retrieved successfully",
-      tasks,
-    });
-  } catch (error) {
-    console.error("Error retrieving completed tasks:", error.response?.data || error.message);
-    return res
-      .status(500)
-      .json({ message: "Internal server error", error: error.message });
-  }
-};
+// Removed: this old toggle used the statuses "Due" / "Completed" (not in the enum) and
+// crashed on an unknown task id. Use PATCH /api/items/toggle-task-status/:id (changeTaskStatus).
+// //need to work in here
+// export const updateStatusOfTask = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     console.log("id", id);
+//     const userId = req.user?.userId;
+//     console.log("userId", userId);
+//     if (!userId) {
+//       return res.status(400).json({ message: "User ID is required" });
+//     }
+//
+//     const task = await prisma.tasks.findUnique({
+//       where: { id: id },
+//       select: { id: true, status: true, user_id: true },
+//     });
+//
+//     console.log(task.user_id);
+//
+//     // user is owner of the task
+//     if (userId !== task.user_id) {
+//       return res
+//         .status(403)
+//         .json({ message: "You are not authorized to update this task" });
+//     }
+//
+//     if (!id) {
+//       return res.status(400).json({ message: "Task ID is required" });
+//     }
+//
+//     if (!task) {
+//       return res.status(404).json({ message: "Task not found" });
+//     }
+//
+//     const newStatus = task.status === "Due" ? "Completed" : "Due";
+//
+//     const updatedTask = await prisma.tasks.update({
+//       where: { id: id },
+//       data: { status: newStatus },
+//     });
+//
+//     return res.status(200).json({
+//       message: "Task status updated successfully",
+//       task: updatedTask,
+//     });
+//   } catch (error) {
+//     console.error("Error updating task status:", error.response?.data || error.message);
+//     return res
+//       .status(500)
+//       .json({ message: "Internal server error", error: error.message });
+//   }
+// };
+// Not needed any more: use GET /api/items/all-tasks?filter=completed (paged).
+// // get all completed task for an user
+// export const getAllcomletedTasksForUser = async (req, res) => {
+//   try {
+//     const userId = req.user?.userId;
+//     if (!userId) {
+//       return res.status(400).json({ message: "User ID is required" });
+//     }
+//     const tasks = await prisma.tasks.findMany({
+//       where: { user_id: userId, status: "Complete" },
+//       orderBy: { created_at: "desc" },
+//     });
+//
+//     return res.status(200).json({
+//       success: true,
+//       message: "Completed Tasks retrieved successfully",
+//       tasks,
+//     });
+//   } catch (error) {
+//     console.error("Error retrieving completed tasks:", error.response?.data || error.message);
+//     return res
+//       .status(500)
+//       .json({ message: "Internal server error", error: error.message });
+//   }
+// };
 
 export const getAllItems = async (req, res) => {
   try {
@@ -2433,22 +2449,30 @@ export const getItemById = async (req, res) => {
       .json({ message: "Internal server error", error: error.message });
   }
 };
+// GET /api/items/:id/tasks?filter=all&page=1&limit=20
+// Same paging, filters and response as /all-tasks, for one item. 404 if the item
+// does not exist, 403 if it belongs to someone else.
 export const getAllTasksForAnItem = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(400).json({ message: "User ID is required" });
+    }
     if (!id) {
       return res.status(400).json({ message: "Item ID is required" });
     }
-    const tasks = await prisma.tasks.findMany({
-      where: { item_id: id },
-      orderBy: { created_at: "desc" },
-    });
 
-    return res.status(200).json({
-      success: true,
-      message: "Tasks retrieved successfully",
-      tasks,
+    const item = await prisma.item.findUnique({
+      where: { id },
+      select: { user_id: true },
     });
+    if (!item) return res.status(404).json({ message: "Item not found" });
+    if (item.user_id !== userId) {
+      return res.status(403).json({ message: "You do not have access to this item" });
+    }
+
+    return await sendTaskPage(req, res, { user_id: userId, item_id: id });
   } catch (error) {
     console.error("Error retrieving tasks:", error.response?.data || error.message);
     return res
@@ -2457,24 +2481,26 @@ export const getAllTasksForAnItem = async (req, res) => {
   }
 };
 
-//New route to change the status of a task
+// PATCH /api/items/toggle-task-status/:id
+// - No body: a real toggle. An open task becomes Complete; a Complete task is
+//   reopened with the status its due date calls for (Overdue, DueNow, ...).
+// - { "status": "Complete" }: marks it complete (does nothing if it already is).
+// - { "status": "Overdue" | "DueNow" | "Upcoming" | "Future" }: reopens it. The
+//   status is worked out from the due date, so the value sent is only a way of
+//   saying "not complete". A task with no due date gets the value that was sent.
 export const changeTaskStatus = async (req, res) => {
   try {
     const { id } = req.params; // taskId
-    const { status } = req.body;
+    const requested = req.body?.status;
     const userId = req.user?.userId;
 
     if (!userId) {
       return res.status(400).json({ message: "User ID is required" });
     }
 
-    if (!status) {
-      return res.status(400).json({ message: "status is required" });
-    }
-
     const validStatuses = ["DueNow", "Upcoming", "Future", "Overdue", "Complete"];
 
-    if (!validStatuses.includes(status)) {
+    if (requested !== undefined && !validStatuses.includes(requested)) {
       return res.status(400).json({
         message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`,
       });
@@ -2482,7 +2508,7 @@ export const changeTaskStatus = async (req, res) => {
 
     const task = await prisma.tasks.findUnique({
       where: { id },
-      select: { user_id: true },
+      select: { user_id: true, status: true, due_at: true },
     });
 
     if (!task) {
@@ -2493,14 +2519,21 @@ export const changeTaskStatus = async (req, res) => {
       return res.status(403).json({ message: "You do not have access to this task" });
     }
 
-    const updatedTask = await prisma.tasks.update({
-      where: { id },
-      data: {
-        status,
-        // If marking complete, also stamp the last_date so it reflects when it was done
-        ...(status === "Complete" ? { last_date: new Date() } : {}),
-      },
-    });
+    const complete = requested ? requested === "Complete" : task.status !== "Complete";
+
+    const data = complete
+      ? { status: "Complete", last_date: new Date() }
+      : {
+          // reopened: the status the due date calls for, and no "done on" date
+          status: task.due_at ? statusFromDueAt(task.due_at) : (requested ?? "DueNow"),
+          last_date: null,
+        };
+
+    // already in the state asked for: nothing to write (keeps the original last_date)
+    const unchanged = complete && task.status === "Complete";
+    const updatedTask = unchanged
+      ? await prisma.tasks.findUnique({ where: { id } })
+      : await prisma.tasks.update({ where: { id }, data });
 
     return res.status(200).json({
       success: true,
@@ -2516,21 +2549,91 @@ export const changeTaskStatus = async (req, res) => {
 };
 
 
+// ?filter= value -> the task `status` it matches ("all" matches every task)
+const TASK_FILTERS = {
+  all: null,
+  overdue: "Overdue",
+  duenow: "DueNow",
+  upcoming: "Upcoming",
+  future: "Future",
+  completed: "Complete",
+};
+const TASK_PAGE_DEFAULT = 20;
+const TASK_PAGE_MAX = 100;
+
+// Sends one page of tasks. `scope` says which tasks are listed ({ user_id } for all
+// of a user's tasks, { user_id, item_id } for one item). The filter is part of the
+// database query, so every page holds only matching tasks and `total` counts only
+// matching tasks; `counts` (for tab badges) ignores the filter and the page.
+const sendTaskPage = async (req, res, scope) => {
+  const filter = String(req.query.filter ?? "all").trim().toLowerCase() || "all";
+  if (!Object.hasOwn(TASK_FILTERS, filter)) {
+    return res.status(400).json({
+      message: `Invalid filter. Must be one of: ${Object.keys(TASK_FILTERS).join(", ")}`,
+    });
+  }
+
+  const toInt = (v, fallback) => {
+    const n = Number.parseInt(v, 10);
+    return Number.isInteger(n) && n > 0 ? n : fallback;
+  };
+  const page = toInt(req.query.page, 1);
+  const limit = Math.min(toInt(req.query.limit, TASK_PAGE_DEFAULT), TASK_PAGE_MAX);
+
+  // Bring this user's task statuses up to date with the clock first, so the
+  // filters, `total` and `counts` below are right. A failure only means the
+  // statuses are as stale as they were; the list is still returned.
+  try {
+    await refreshTaskStatuses({ userId: scope.user_id });
+  } catch (err) {
+    console.error("refreshTaskStatuses failed:", err.message);
+  }
+
+  const status = TASK_FILTERS[filter];
+  const where = { ...scope, ...(status ? { status } : {}) };
+
+  const [tasks, total, grouped] = await Promise.all([
+    prisma.tasks.findMany({
+      where,
+      // id breaks ties, so tasks created in the same instant never move between pages
+      orderBy: [{ created_at: "desc" }, { id: "desc" }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.tasks.count({ where }),
+    prisma.tasks.groupBy({ by: ["status"], where: scope, _count: { _all: true } }),
+  ]);
+
+  const byStatus = Object.fromEntries(grouped.map((g) => [g.status, g._count._all]));
+  const counts = { all: grouped.reduce((sum, g) => sum + g._count._all, 0) };
+  for (const [name, st] of Object.entries(TASK_FILTERS)) {
+    if (st) counts[name] = byStatus[st] ?? 0;
+  }
+
+  const totalPages = Math.ceil(total / limit);
+  return res.status(200).json({
+    success: true,
+    message: "Tasks retrieved successfully",
+    tasks,
+    filter,
+    page,
+    limit,
+    total,
+    totalPages,
+    hasNextPage: page < totalPages,
+    hasPreviousPage: page > 1,
+    counts,
+  });
+};
+
+// GET /api/items/all-tasks?filter=all&page=1&limit=20
 export const getAlltasksForAuser = async (req, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) {
       return res.status(400).json({ message: "User ID is required" });
     }
-    const tasks = await prisma.tasks.findMany({
-      where: { user_id: userId },
-      orderBy: { created_at: "desc" },
-    });
-    return res.status(200).json({
-      success: true,
-      message: "Tasks retrieved successfully",
-      tasks,
-    });
+    return await sendTaskPage(req, res, { user_id: userId });
   } catch (error) {
     console.error("Error retrieving tasks:", error.response?.data || error.message);
     return res

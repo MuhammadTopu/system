@@ -57,7 +57,13 @@ app.get("/", (req, res) => {
 });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use(
+  "/uploads",
+  express.static(path.join(__dirname, "uploads"), {
+    // never let a browser guess a different type than the file extension says
+    setHeaders: (res) => res.setHeader("X-Content-Type-Options", "nosniff"),
+  }),
+);
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.use((req, res, next) => {

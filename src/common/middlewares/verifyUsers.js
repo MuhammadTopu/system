@@ -40,18 +40,24 @@ export const verifyUser = (...allowedRoles) => {
         .json({ message: "Access denied. Insufficient permission." });
     }
 
-    // Access tokens live for months, so a deleted account has to be stopped here:
-    // its token is still valid, but the account is gone.
+    // Access tokens live for months, so a deleted or suspended account has to be
+    // stopped here: its token is still valid, but the account must not be used.
     if (decoded.userId && decoded.type === "USER") {
       try {
         const account = await prisma.user.findUnique({
           where: { id: decoded.userId },
-          select: { deleted_at: true },
+          select: { deleted_at: true, status: true },
         });
         if (!account || account.deleted_at) {
           return res.status(401).json({
             message: "This account has been deleted",
             code: "ACCOUNT_DELETED",
+          });
+        }
+        if (account.status === "suspended") {
+          return res.status(403).json({
+            message: "Your account is suspended. Please contact support.",
+            code: "ACCOUNT_SUSPENDED",
           });
         }
       } catch (error) {

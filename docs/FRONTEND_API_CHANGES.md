@@ -30,7 +30,14 @@ All errors are JSON with a `message` field.
 | Admin | `GET /admin/reports`, `GET /admin/reports/:id`, `PATCH /admin/reports/:id` | **New.** Review reports and answer users |
 | Auth | any protected endpoint | A deleted account's token now returns 401 with `code: "ACCOUNT_DELETED"` |
 
-Not changed: `get-all-completed-tasks`, `all-tasks`, `:id/tasks`, `upload-maintenance-history/:id`, `toggle-task-status/:id`, `delete-task/:id`, `delete-item/:id`.
+| Tasks | `GET /items/all-tasks` | **Now paged and filterable** (`filter`, `page`, `limit`). See section 6.1 |
+| Tasks | `GET /items/:id/tasks` | **Now paged and filterable, and checks the item is yours** (403 / 404). See section 6.1 |
+
+**Removed:** `GET /items/get-all-completed-tasks`. Use `GET /items/all-tasks?filter=completed` instead.
+
+**Changed:** `PATCH /items/toggle-task-status/:id` is now a real toggle. With no body it marks an open task `Complete`, or reopens a `Complete` task with the status its due date calls for. `{ "status": "Complete" }` still marks it complete. Reopening clears `last_date`. Any other status you send only means "not complete": the server sets the real status from the due date.
+
+Not changed: `upload-maintenance-history/:id`, `delete-task/:id`, `delete-item/:id`.
 
 ---
 
@@ -397,6 +404,56 @@ Each task has a `shop_suggestions` field. When it is filled, it is a list of up 
 
 ---
 
+## 6.1 `GET /items/all-tasks`: paging and filters (user token required)
+
+```
+GET /api/items/all-tasks?filter=overdue&page=1&limit=20
+```
+
+| Query | Default | Notes |
+|---|---|---|
+| `filter` | `all` | `all`, `overdue`, `duenow`, `upcoming`, `future`, `completed` (case-insensitive) |
+| `page` | `1` | |
+| `limit` | `20` | max 100 |
+
+- `all`: every task, **including completed ones**.
+- `overdue`, `duenow`, `upcoming`, `future`: tasks whose `status` field is `Overdue`, `DueNow`, `Upcoming` or `Future`.
+- `completed`: tasks whose `status` is `Complete`.
+- The filter runs **on the server before paging**, so every page only has matching tasks and `total` counts only matching tasks.
+- Newest first (`created_at`, then `id`), so a task never jumps between pages.
+- **Behavior change:** without `page` or `limit` the endpoint now returns the first **20** tasks, not all of them.
+
+Response (200):
+```json
+{
+  "success": true,
+  "message": "Tasks retrieved successfully",
+  "tasks": [ { "id": "…", "upcoming_task": "Oil change", "status": "Overdue", "…": "…" } ],
+  "filter": "overdue",
+  "page": 1,
+  "limit": 20,
+  "total": 34,
+  "totalPages": 2,
+  "hasNextPage": true,
+  "hasPreviousPage": false,
+  "counts": { "all": 120, "overdue": 34, "duenow": 20, "upcoming": 41, "future": 10, "completed": 15 }
+}
+```
+- `counts` has the number of tasks per filter for the tab badges. It ignores the current `filter` and page.
+- A page past the end returns `tasks: []` with the real `total`.
+- Errors: 400 `Invalid filter. Must be one of: all, overdue, duenow, upcoming, future, completed`.
+
+### `GET /items/:id/tasks`: tasks of one item
+
+```
+GET /api/items/<itemId>/tasks?filter=all&page=1&limit=20
+```
+Same query parameters, paging rules and response as `all-tasks` above, but only for this item. `counts` is also for this item only.
+
+- **Behavior change:** without `page` or `limit` it now returns the first **20** tasks, not all of them.
+- **New errors:** 404 `Item not found` (wrong or deleted id), 403 `You do not have access to this item` (the item belongs to another user). Before, any user could read any item's tasks.
+- Task statuses are brought up to date with the clock before the list is read.
+
 ## 6. Other behavior changes
 
 - The old delayed "task generated" push and the "Still there?" login follow-up push are removed. See section 7 for the new notifications.
@@ -648,8 +705,22 @@ The response also has `openCount`: the number of open reports in total (for a ba
 | 400 | Validation error. Show `message` |
 | 401 + `code: "ACCOUNT_DELETED"` | The account was deleted. Clear tokens and go to login. Don't refresh |
 | 401 | Access token invalid or expired. Call refresh, then retry |
-| 429 | Too many reports today |
+| 429 | Too many reports today, or too many sign-in / OTP attempts (see section 11) |
 | 403 + `premiumRequired: true` | Free user on a premium endpoint. Show the upgrade screen |
 | 403 | Not your item |
 | 404 | Item or user not found |
 | 500 | Server or AI failure. Show a "try again" message |
+
+---
+
+## 11. Security changes (frontend must handle these)
+
+| Change | What the app must do |
+|---|---|
+| **OTP codes are now 6 digits** (were 4) | Make the OTP input accept 6 digits. The server still accepts a 4-digit code that was sent just before the update. |
+| **`POST /users/register-step1` no longer returns `otp`** | Don't read `otp` from the response. The code only comes by email. |
+| **Rate limits (per email, per 15 minutes)** | `login`: 10 tries. `register-step1` and `forget_pass`: 5 each. `verify-otp` and `checkForgetPassOtp`: 5 each. Over the limit returns **429** `Too many attempts. Please try again in N minute(s).` plus a `Retry-After` header (seconds). Show the message and disable the button. |
+| **Suspended accounts are blocked on every request** | Any protected endpoint returns **403** `{ "message": "Your account is suspended. Please contact support.", "code": "ACCOUNT_SUSPENDED" }`. Show the message and go to the login screen. Before, an already logged-in suspended user could keep using the app. |
+| `POST /items/upload-maintenance-history/:id` | Returns **403** `You do not have access to this task` for a task that isn't yours. `receiptUrl` in the response is now built from the server's real base URL. |
+| `POST /users/upload` and `PUT /users/update-image` | Need a valid token. Without one they return 401 and nothing is saved. Uploaded images are stored as `.jpg`, `.png` or `.gif` by their real type. Anything else returns 400 `Invalid file type`. |
+| `POST /firebase/test-push` | Admin token only now. |

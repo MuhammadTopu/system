@@ -11,7 +11,7 @@ import {
     getAllTasksForAnItem,
     getAlltasksForAuser,
     // updateStatusOfTask,
-    getAllcomletedTasksForUser,
+    // getAllcomletedTasksForUser, // removed: use GET /all-tasks?filter=completed
     deleteTask,
     deleteItem,
     submitAnswers,
@@ -24,7 +24,7 @@ router.post('/add-item', verifyUser("USER"), upload.single('img'), addItem);
 router.get('/get-all-items', verifyUser("USER"), getAllItems);
 
 //get all comleted tasks
-router.get('/get-all-completed-tasks', verifyUser("USER"), getAllcomletedTasksForUser);
+// router.get('/get-all-completed-tasks', verifyUser("USER"), getAllcomletedTasksForUser);
 
 //generate questions for an item
 router.post("/:id/questions", verifyUser("USER"), generateQuestions);
