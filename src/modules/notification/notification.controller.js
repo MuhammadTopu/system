@@ -107,6 +107,35 @@ export const markNotificationRead = async (req, res) => {
   }
 };
 
+// PATCH /api/notifications/read-all
+// Marks every unread, not deleted notification of the logged-in user as read, in
+// one query. Already-read ones keep their original read_at. Calling it again
+// changes nothing and still returns 200 (with updated: 0).
+export const markAllNotificationsRead = async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(400).json({ message: "User ID is required" });
+    }
+
+    const now = new Date();
+    const { count } = await prisma.notification.updateMany({
+      where: { receiver_id: userId, deleted_at: null, read_at: null },
+      data: { read_at: now, updated_at: now },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: count > 0 ? "All notifications marked as read" : "No unread notifications",
+      updated: count,
+      unreadCount: 0,
+    });
+  } catch (error) {
+    console.error("Error marking all notifications as read:", error.message);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
 // DELETE /api/notifications/:id
 // Soft delete: the row stays in the database with deleted_at set.
 export const deleteNotification = async (req, res) => {

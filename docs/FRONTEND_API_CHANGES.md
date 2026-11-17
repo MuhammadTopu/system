@@ -21,6 +21,7 @@ All errors are JSON with a `message` field.
 | Notifications | (push, see section 7) | New notifications for login, item added, tasks created, task reminders and premium changes |
 | Notifications | `GET /notifications` | **New.** The user's notification list (paged, with unread count) |
 | Notifications | `PATCH /notifications/:id/read` | **New.** Mark one notification as read |
+| Notifications | `PATCH /notifications/read-all` | **New.** Mark all notifications as read |
 | Notifications | `DELETE /notifications/:id` | **New.** Soft delete one notification |
 | Admin | `POST /admin/notifications/send` | **New.** Send a custom system message |
 | Admin | `POST /admin/notifications/run-task-reminders` | **New.** Run the task reminder job now |
@@ -545,7 +546,17 @@ Response (200):
 Response (200): `{ "success": true, "message": "Notification deleted" }`
 - 404 `"Notification not found"`: it doesn't exist, belongs to someone else, or is already deleted.
 
-Both PATCH and DELETE return 401 for a missing or invalid token. There is no "mark all as read" endpoint yet. To do that in the app, call PATCH for each unread notification.
+**`PATCH /notifications/read-all`**: marks **all** of the user's unread notifications as read in one call. No body. Deleted notifications are ignored, and ones already read keep their original `read_at`.
+
+Response (200):
+```json
+{ "success": true, "message": "All notifications marked as read", "updated": 7, "unreadCount": 0 }
+```
+- `updated`: how many notifications were changed. With nothing unread it is `0`, the message is `No unread notifications`, and the status is still 200. Calling it twice is safe.
+- `unreadCount` is always `0` after the call: use it to clear the badge.
+- Use it for a "Mark all as read" button. Then refresh the list (or set `is_read: true` on every row locally).
+
+All of the notification endpoints return 401 for a missing or invalid token.
 
 ### 7.2 Task reminder cron (what it does, and the admin trigger)
 
